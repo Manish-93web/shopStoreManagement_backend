@@ -24,8 +24,8 @@ export interface IProduct extends Document {
 
 const ProductSchema: Schema = new Schema({
     name: { type: String, required: true },
-    sku: { type: String, required: true, unique: true },
-    barcode: { type: String, required: true, unique: true },
+    sku: { type: String, required: true },
+    barcode: { type: String, required: true },
     category: { type: Schema.Types.ObjectId, ref: 'Category', required: true },
     brand: { type: Schema.Types.ObjectId, ref: 'Brand' },
     description: { type: String },
@@ -33,8 +33,10 @@ const ProductSchema: Schema = new Schema({
     costPrice: { type: Number, required: true },
     taxRate: { type: Number, default: 0 },
     images: [{ type: String }],
-    hasVariants: { type: Boolean, default: false },
-    storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
 }, { timestamps: true });
+
+// Compound indexes to allow same SKU/Barcode across different stores/tenants
+ProductSchema.index({ storeId: 1, sku: 1 }, { unique: true });
+ProductSchema.index({ storeId: 1, barcode: 1 }, { unique: true });
 
 export default mongoose.model<IProduct>('Product', ProductSchema);

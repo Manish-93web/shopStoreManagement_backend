@@ -6,6 +6,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import redisClient from '../config/redis.js';
+import AuditLog from '../models/AuditLog.js';
 
 // @desc    Get all products for a tenant
 // @route   GET /api/products
@@ -41,6 +42,17 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
         store: req.tenantId,
         quantity: req.body.initialStock || 0
     });
+
+    // Audit Log
+    await AuditLog.create({
+        user: req.user?._id,
+        storeId: req.tenantId,
+        action: 'CREATED_PRODUCT',
+        details: `Product "${product.name}" (${product.sku}) created.`,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+    });
+
     res.status(201).json(new ApiResponse(201, product, "Product created successfully"));
 });
 
@@ -50,9 +62,23 @@ export const updateProduct = asyncHandler(async (req: TenantRequest, res: Respon
     const product = await Product.findOneAndUpdate(
         { _id: req.params.id, storeId: req.tenantId },
         req.body,
-        { new: true }
     );
     if (!product) return res.status(404).json(new ApiResponse(404, null, "Product not found"));
+
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.del(`products:${req.tenantId}`);
+    }
+
+    // Audit Log
+    await AuditLog.create({
+        user: req.user?._id,
+        storeId: req.tenantId,
+        action: 'UPDATED_PRODUCT',
+        details: `Product "${product.name}" updated.`,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+    });
+
     res.status(200).json(new ApiResponse(200, product, "Product updated successfully"));
 });
 
@@ -61,7 +87,23 @@ export const updateProduct = asyncHandler(async (req: TenantRequest, res: Respon
 export const deleteProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
     const product = await Product.findOneAndDelete({ _id: req.params.id, storeId: req.tenantId });
     if (!product) return res.status(404).json(new ApiResponse(404, null, "Product not found"));
+
     await Inventory.deleteMany({ product: req.params.id });
+
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.del(`products:${req.tenantId}`);
+    }
+
+    // Audit Log
+    await AuditLog.create({
+        user: req.user?._id,
+        storeId: req.tenantId,
+        action: 'DELETED_PRODUCT',
+        details: `Product "${product.name}" deleted.`,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+    });
+
     res.status(200).json(new ApiResponse(200, null, "Product deleted successfully"));
 });
 
@@ -102,4 +144,39 @@ export const bulkImportProducts = asyncHandler(async (req: TenantRequest, res: R
         await redisClient.del(`products:${req.tenantId}`);
     }
     res.status(200).json(new ApiResponse(200, results, `Imported ${results.success} products`));
+});
+
+// @desc    Bulk update products
+// @route   PUT /api/products/bulk
+export const bulkUpdateProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const productsData = req.body;
+    if (!Array.isArray(productsData)) return res.status(400).json(new ApiResponse(400, null, "Invalid data format"));
+
+    const results = { success: 0, failed: 0, errors: [] as any[] };
+
+    for (const data of productsData) {
+        try {
+            if (!data._id) throw new Error("Product ID is required for bulk update");
+            await Product.findOneAndUpdate({ _id: data._id, storeId: req.tenantId }, data);
+            results.success++;
+        } catch (error: any) {
+            results.failed++;
+            results.errors.push({ id: data._id, error: error.message });
+        }
+    }
+
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.del(`products:${req.tenantId}`);
+    }
+
+    await AuditLog.create({
+        user: req.user?._id,
+        storeId: req.tenantId,
+        action: 'UPDATED_PRODUCT',
+        details: `Bulk updated ${results.success} products.`,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+    });
+
+    res.status(200).json(new ApiResponse(200, results, `Updated ${results.success} products`));
 });
