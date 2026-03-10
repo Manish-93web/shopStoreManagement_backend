@@ -1,0 +1,88 @@
+import { Response } from 'express';
+import User, { UserRole } from '../models/User.js';
+import Employee from '../models/Employee.js';
+import asyncHandler from '../utils/asyncHandler.js';
+import ApiResponse from '../utils/apiResponse.js';
+import { TenantRequest } from '../middleware/tenantHandler.js';
+import mongoose from 'mongoose';
+
+// @desc    Get all employees for a store
+// @route   GET /api/employees
+export const getEmployees = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const employees = await User.find({
+        storeId: req.tenantId as any,
+        role: { $in: [UserRole.MANAGER, UserRole.CASHIER, UserRole.STORE_OWNER] }
+    }).select('-password -refreshToken');
+    res.status(200).json(new ApiResponse(200, employees));
+});
+
+// @desc    Create a new employee (add user to store)
+// @route   POST /api/employees
+export const createEmployee = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { name, email, password, role, designation, salary, joiningDate } = req.body;
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+        return res.status(400).json(new ApiResponse(400, null, 'Email already in use'));
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+        const user = await User.create([{
+            name,
+            email,
+            password,
+            role: role || UserRole.CASHIER,
+            storeId: req.tenantId as any,
+            stores: [req.tenantId as any]
+        }], { session });
+
+        const employee = await Employee.create([{
+            user: user[0]._id,
+            employeeId: `EMP-${Date.now()}`,
+            storeId: req.tenantId as any,
+            designation: designation || 'Staff',
+            salary: salary || { base: 0, currency: 'INR', frequency: 'Monthly' },
+            joiningDate: joiningDate || new Date()
+        }], { session });
+
+        await session.commitTransaction();
+        res.status(201).json(new ApiResponse(201, {
+            user: user[0],
+            employee: employee[0]
+        }, 'Employee created successfully'));
+    } catch (error: any) {
+        await session.abortTransaction();
+        res.status(500).json(new ApiResponse(500, null, error.message));
+    } finally {
+        session.endSession();
+    }
+});
+
+// @desc    Update employee details
+// @route   PUT /api/employees/:id
+export const updateEmployee = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { name, role, isActive } = req.body;
+    const employee = await User.findOneAndUpdate(
+        { _id: req.params.id, storeId: req.tenantId as any },
+        { name, role, isActive },
+        { new: true }
+    ).select('-password -refreshToken');
+
+    if (!employee) {
+        return res.status(404).json(new ApiResponse(404, null, 'Employee not found'));
+    }
+    res.status(200).json(new ApiResponse(200, employee, 'Employee updated'));
+});
+
+// @desc    Remove employee from store
+// @route   DELETE /api/employees/:id
+export const deleteEmployee = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const employee = await User.findOneAndDelete({ _id: req.params.id, storeId: req.tenantId as any });
+    if (!employee) {
+        return res.status(404).json(new ApiResponse(404, null, 'Employee not found'));
+    }
+    res.status(200).json(new ApiResponse(200, null, 'Employee removed'));
+});

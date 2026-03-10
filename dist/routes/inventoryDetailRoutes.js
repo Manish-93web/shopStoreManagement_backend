@@ -1,0 +1,10 @@
+import express from 'express';
+import { protect } from '../middleware/auth.js';
+import { tenantHandler } from '../middleware/tenantHandler.js';
+import { inventoryDetailController } from '../controllers/inventoryDetailController.js';
+const router = express.Router();
+router.use(protect, tenantHandler);
+router.get('/batches', inventoryDetailController.getBatches);
+router.get('/serials', inventoryDetailController.getSerials);
+router.put('/serials/status', inventoryDetailController.updateSerialStatus);
+export default router;

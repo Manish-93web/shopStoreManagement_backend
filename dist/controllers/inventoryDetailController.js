@@ -1,0 +1,43 @@
+import InventoryBatch from '../models/InventoryBatch.js';
+import ProductSerial from '../models/ProductSerial.js';
+import ApiResponse from '../utils/apiResponse.js';
+import asyncHandler from '../utils/asyncHandler.js';
+export const inventoryDetailController = {
+    // @desc    Get batches for a product
+    getBatches: asyncHandler(async (req, res) => {
+        const { productId, variantId } = req.query;
+        const query = {
+            storeId: req.tenantId,
+            product: productId,
+            status: 'Active'
+        };
+        if (variantId)
+            query.variant = variantId;
+        const batches = await InventoryBatch.find(query).sort({ expiryDate: 1 });
+        res.status(200).json(new ApiResponse(200, batches));
+    }),
+    // @desc    Get serial numbers for a product
+    getSerials: asyncHandler(async (req, res) => {
+        const { productId, variantId } = req.query;
+        const query = {
+            storeId: req.tenantId,
+            product: productId,
+            status: 'In Stock'
+        };
+        if (variantId)
+            query.variant = variantId;
+        const serials = await ProductSerial.find(query);
+        res.status(200).json(new ApiResponse(200, serials));
+    }),
+    // @desc    Update serial status
+    updateSerialStatus: asyncHandler(async (req, res) => {
+        const { serialNumber, status, notes } = req.body;
+        const serial = await ProductSerial.findOneAndUpdate({ serialNumber, storeId: req.tenantId }, {
+            $set: { status },
+            $push: { history: { action: `Status changed to ${status}`, notes, date: new Date() } }
+        }, { new: true });
+        if (!serial)
+            return res.status(404).json(new ApiResponse(404, null, "Serial not found"));
+        res.status(200).json(new ApiResponse(200, serial, "Serial status updated"));
+    })
+};

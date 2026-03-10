@@ -1,0 +1,95 @@
+import { Response } from 'express';
+import { customAlphabet } from 'nanoid';
+import Product from '../models/Product.js';
+import Inventory from '../models/Inventory.js';
+import asyncHandler from '../utils/asyncHandler.js';
+import ApiResponse from '../utils/apiResponse.js';
+import { TenantRequest } from '../middleware/tenantHandler.js';
+import redisClient from '../config/redis.js';
+
+// @desc    Get all products for a tenant
+// @route   GET /api/products
+export const getProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const cacheKey = `products:${req.tenantId}`;
+    const cachedProducts = await redisClient.get(cacheKey);
+    if (cachedProducts) {
+        return res.status(200).json(new ApiResponse(200, JSON.parse(cachedProducts), "Products fetched from cache"));
+    }
+    const products = await Product.find({ storeId: req.tenantId }).populate('category');
+    await redisClient.setEx(cacheKey, 3600, JSON.stringify(products));
+    res.status(200).json(new ApiResponse(200, products));
+});
+
+// @desc    Create a new product
+// @route   POST /api/products
+export const createProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const productData = { ...req.body, storeId: req.tenantId };
+    if (!productData.barcode) {
+        const generateBarcode = customAlphabet('0123456789', 12);
+        productData.barcode = generateBarcode();
+    }
+    const product = await Product.create(productData);
+    await redisClient.del(`products:${req.tenantId}`);
+    await Inventory.create({
+        product: product._id,
+        store: req.tenantId,
+        quantity: req.body.initialStock || 0
+    });
+    res.status(201).json(new ApiResponse(201, product, "Product created successfully"));
+});
+
+// @desc    Update product
+// @route   PUT /api/products/:id
+export const updateProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const product = await Product.findOneAndUpdate(
+        { _id: req.params.id, storeId: req.tenantId },
+        req.body,
+        { new: true }
+    );
+    if (!product) return res.status(404).json(new ApiResponse(404, null, "Product not found"));
+    res.status(200).json(new ApiResponse(200, product, "Product updated successfully"));
+});
+
+// @desc    Delete product
+// @route   DELETE /api/products/:id
+export const deleteProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const product = await Product.findOneAndDelete({ _id: req.params.id, storeId: req.tenantId });
+    if (!product) return res.status(404).json(new ApiResponse(404, null, "Product not found"));
+    await Inventory.deleteMany({ product: req.params.id });
+    res.status(200).json(new ApiResponse(200, null, "Product deleted successfully"));
+});
+
+// @desc    Manually adjust stock for a product
+// @route   PATCH /api/products/:id/adjust
+export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { quantity, reason } = req.body;
+    const inv = await Inventory.findOneAndUpdate(
+        { product: req.params.id, store: req.tenantId },
+        { $inc: { quantity } },
+        { new: true, upsert: true }
+    );
+    // Invalidate cache
+    await redisClient.del(`products:${req.tenantId}`);
+    res.status(200).json(new ApiResponse(200, { inventory: inv, reason }, 'Stock adjusted'));
+});
+
+// @desc    Bulk import products
+// @route   POST /api/products/bulk
+export const bulkImportProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const productsData = req.body;
+    if (!Array.isArray(productsData)) return res.status(400).json(new ApiResponse(400, null, "Invalid data format"));
+    const results = { success: 0, failed: 0, errors: [] as any[] };
+    const generateBarcode = customAlphabet('0123456789', 12);
+    for (const data of productsData) {
+        try {
+            const product = await Product.create({ ...data, storeId: req.tenantId, barcode: data.barcode || generateBarcode() });
+            await Inventory.create({ product: product._id, store: req.tenantId, quantity: data.initialStock || 0 });
+            results.success++;
+        } catch (error: any) {
+            results.failed++;
+            results.errors.push({ name: data.name, error: error.message });
+        }
+    }
+    await redisClient.del(`products:${req.tenantId}`);
+    res.status(200).json(new ApiResponse(200, results, `Imported ${results.success} products`));
+});

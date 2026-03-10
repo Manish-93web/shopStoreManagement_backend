@@ -1,0 +1,10 @@
+import express from 'express';
+import { protect } from '../middleware/auth.js';
+import { tenantHandler } from '../middleware/tenantHandler.js';
+import { clockIn, clockOut, getAttendance } from '../controllers/attendanceController.js';
+const router = express.Router();
+router.use(protect, tenantHandler);
+router.post('/clock-in', clockIn);
+router.patch('/clock-out', clockOut);
+router.get('/', getAttendance);
+export default router;

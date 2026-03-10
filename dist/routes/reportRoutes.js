@@ -1,0 +1,13 @@
+import express from 'express';
+import { protect } from '../middleware/auth.js';
+import { tenantHandler } from '../middleware/tenantHandler.js';
+import { getSalesReport, getLowStockReport, getProfitReport, getTaxReport, queueReport, exportReport } from '../controllers/reportController.js';
+const router = express.Router();
+router.use(protect, tenantHandler);
+router.get('/sales', getSalesReport);
+router.get('/low-stock', getLowStockReport);
+router.get('/profit', getProfitReport);
+router.get('/tax', getTaxReport);
+router.get('/export', exportReport);
+router.post('/queue', queueReport);
+export default router;
