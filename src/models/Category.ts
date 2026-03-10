@@ -16,4 +16,7 @@ const CategorySchema: Schema = new Schema({
     description: { type: String },
 }, { timestamps: true });
 
+// Prevent duplicate category names under the same parent within a store
+CategorySchema.index({ storeId: 1, name: 1, parentId: 1 }, { unique: true });
+
 export default mongoose.model<ICategory>('Category', CategorySchema);

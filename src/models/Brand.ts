@@ -16,4 +16,6 @@ const BrandSchema: Schema = new Schema({
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
 }, { timestamps: true });
 
+BrandSchema.index({ storeId: 1, name: 1 }, { unique: true });
+
 export default mongoose.model<IBrand>('Brand', BrandSchema);

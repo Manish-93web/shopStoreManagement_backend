@@ -7,7 +7,11 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import { emitToStore } from '../config/socket.js';
-import Loyalty from '../models/Loyalty.js';
+import { sendEmail } from '../utils/emailService.js';
+import { sendSMS } from '../utils/smsService.js';
+
+// ... (wait, targeting specific chunk)
+
 import Wallet from '../models/Wallet.js';
 
 // @desc    Create a new POS order
@@ -59,19 +63,58 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
 
         // Deduct points if used
         if (loyaltyPointsUsed) {
+            if (loyalty.points < loyaltyPointsUsed) {
+                return res.status(400).json(new ApiResponse(400, null, "Insufficient loyalty points"));
+            }
             loyalty.points -= loyaltyPointsUsed;
             loyalty.totalRedeemed += loyaltyPointsUsed;
         }
 
-        // Add points for new purchase (1 point per 100 spent)
-        const earnedPoints = Math.floor(grandTotal / 100);
+        // Add points based on Tier multipliers
+        // Silver: 1x, Gold: 1.5x, Platinum: 2x
+        let multiplier = 1;
+        if (loyalty.tier === 'Gold') multiplier = 1.5;
+        if (loyalty.tier === 'Platinum') multiplier = 2;
+
+        const earnedPoints = Math.floor((grandTotal / 100) * multiplier);
         loyalty.points += earnedPoints;
         loyalty.totalEarned += earnedPoints;
+        loyalty.lifetimeSpent += grandTotal;
         loyalty.lastUpdated = new Date();
+
+        // Auto-upgrade Tiers
+        if (loyalty.lifetimeSpent >= 200000) {
+            loyalty.tier = 'Platinum';
+        } else if (loyalty.lifetimeSpent >= 50000) {
+            loyalty.tier = 'Gold';
+        }
+
         await loyalty.save();
 
-        // Also update legacy field in Customer for compatibility
-        await Customer.findByIdAndUpdate(customerId, { $inc: { loyaltyPoints: earnedPoints - (loyaltyPointsUsed || 0) } });
+        // Also update legacy field in Customer for compatibility and trigger notifications
+        const customer = await Customer.findById(customerId);
+        if (customer) {
+            customer.loyaltyPoints += (earnedPoints - (loyaltyPointsUsed || 0));
+            await customer.save();
+
+            // Send Automated Notifications
+            if (customer.email) {
+                sendEmail({
+                    to: customer.email,
+                    subject: `Receipt for Order ${orderNumber}`,
+                    html: `<h2>Thank you for your purchase!</h2>
+                           <p>Order Number: <strong>${orderNumber}</strong></p>
+                           <p>Total Paid: <strong>${grandTotal}</strong></p>
+                           <p>We hope to see you again soon.</p>`
+                }).catch(console.log); // Fire and forget
+            }
+            if (customer.phone) {
+                sendSMS({
+                    to: customer.phone,
+                    body: `RetailSync: Thanks for your purchase! Order ${orderNumber} total is ${grandTotal}.`
+                }).catch(console.log);
+            }
+        }
     }
 
     // Reduce inventory for each item

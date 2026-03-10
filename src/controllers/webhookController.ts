@@ -24,10 +24,23 @@ export const stripeWebhook = asyncHandler(async (req: Request, res: Response) =>
 
         if (storeId) {
             await Store.findByIdAndUpdate(storeId, {
-                'subscription.status': 'ACTIVE',
-                'subscription.expiryDate': new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+                subscriptionStatus: 'Active',
+                lastBillingDate: new Date()
             });
             console.log(`Store ${storeId} subscription activated via Stripe.`);
+        }
+    } else if (event.type === 'invoice.payment_succeeded') {
+        const invoice = event.data.object as Stripe.Invoice;
+        const storeId = invoice.subscription_details?.metadata?.storeId; // Note: depends on payload
+        if (storeId) {
+            await Store.findByIdAndUpdate(storeId, { subscriptionStatus: 'Active', lastBillingDate: new Date() });
+        }
+    } else if (event.type === 'invoice.payment_failed') {
+        const invoice = event.data.object as Stripe.Invoice;
+        const storeId = invoice.subscription_details?.metadata?.storeId;
+        if (storeId) {
+            await Store.findByIdAndUpdate(storeId, { subscriptionStatus: 'Past Due' });
+            console.log(`Store ${storeId} subscription marked Past Due.`);
         }
     }
 

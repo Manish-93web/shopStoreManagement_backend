@@ -5,6 +5,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import mongoose from 'mongoose';
+import Order from '../models/Order.js';
 
 // @desc    Get all employees for a store
 // @route   GET /api/employees
@@ -85,4 +86,41 @@ export const deleteEmployee = asyncHandler(async (req: TenantRequest, res: Respo
         return res.status(404).json(new ApiResponse(404, null, 'Employee not found'));
     }
     res.status(200).json(new ApiResponse(200, null, 'Employee removed'));
+});
+
+// @desc    Get staff performance metrics
+// @route   GET /api/employees/performance
+export const getStaffPerformance = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const metrics = await Order.aggregate([
+        { $match: { storeId: new mongoose.Types.ObjectId(req.tenantId as string), status: 'Completed' } },
+        {
+            $group: {
+                _id: "$cashier",
+                totalSales: { $sum: "$grandTotal" },
+                ordersCount: { $sum: 1 },
+                averageOrderValue: { $avg: "$grandTotal" }
+            }
+        },
+        {
+            $lookup: {
+                from: "users",
+                localField: "_id",
+                foreignField: "_id",
+                as: "employee"
+            }
+        },
+        { $unwind: "$employee" },
+        {
+            $project: {
+                name: "$employee.name",
+                role: "$employee.role",
+                totalSales: 1,
+                ordersCount: 1,
+                averageOrderValue: 1
+            }
+        },
+        { $sort: { totalSales: -1 } }
+    ]);
+
+    res.status(200).json(new ApiResponse(200, metrics, "Staff performance metrics retrieved"));
 });

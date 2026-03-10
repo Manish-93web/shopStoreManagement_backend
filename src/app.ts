@@ -6,6 +6,7 @@ import productRoutes from './routes/productRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import purchaseOrderRoutes from './routes/purchaseOrderRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
+import walletRoutes from './routes/walletRoutes.js';
 import storeRoutes from './routes/storeRoutes.js';
 import discountRoutes from './routes/discountRoutes.js';
 import transferRoutes from './routes/transferRoutes.js';
@@ -13,6 +14,7 @@ import reportRoutes from './routes/reportRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import returnRoutes from './routes/returnRoutes.js';
+import shiftRoutes from './routes/shiftRoutes.js';
 import supplierRoutes from './routes/supplierRoutes.js';
 import brandRoutes from './routes/brandRoutes.js';
 import taxRuleRoutes from './routes/taxRuleRoutes.js';
@@ -25,6 +27,8 @@ import searchRoutes from './routes/searchRoutes.js';
 import importRoutes from './routes/importRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import webhookRoutes from './routes/webhookRoutes.js';
+import analyticsRoutes from './routes/analyticsRoutes.js';
+import superAdminRoutes from './routes/superAdminRoutes.js';
 import rateLimit from 'express-rate-limit';
 import * as Sentry from "@sentry/node";
 import { sentryContextMiddleware } from './config/sentry.js';
@@ -59,6 +63,7 @@ v1.use('/categories', productRoutes); // categories are sub-routed inside produc
 v1.use('/orders', orderRoutes);
 v1.use('/purchase-orders', purchaseOrderRoutes);
 v1.use('/customers', customerRoutes);
+v1.use('/wallets', walletRoutes);
 v1.use('/stores', storeRoutes);
 
 // Inventory & Supply
@@ -71,6 +76,7 @@ v1.use('/discounts', discountRoutes);
 // HR
 v1.use('/employees', employeeRoutes);
 v1.use('/attendance', attendanceRoutes);
+v1.use('/shifts', shiftRoutes);
 
 // Returns & Sessions
 v1.use('/returns', returnRoutes);
@@ -85,6 +91,8 @@ v1.use('/webhooks', webhookRoutes);
 
 // Reporting
 v1.use('/reports', reportRoutes);
+v1.use('/analytics', analyticsRoutes);
+v1.use('/super-admin', superAdminRoutes);
 
 // Expansion Pack
 v1.use('/brands', brandRoutes);

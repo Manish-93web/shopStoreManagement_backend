@@ -11,12 +11,16 @@ import redisClient from '../config/redis.js';
 // @route   GET /api/products
 export const getProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
     const cacheKey = `products:${req.tenantId}`;
-    const cachedProducts = await redisClient.get(cacheKey);
-    if (cachedProducts) {
-        return res.status(200).json(new ApiResponse(200, JSON.parse(cachedProducts), "Products fetched from cache"));
+    if (process.env.SKIP_REDIS !== 'true') {
+        const cachedProducts = await redisClient.get(cacheKey);
+        if (cachedProducts) {
+            return res.status(200).json(new ApiResponse(200, JSON.parse(cachedProducts), "Products fetched from cache"));
+        }
     }
     const products = await Product.find({ storeId: req.tenantId }).populate('category');
-    await redisClient.setEx(cacheKey, 3600, JSON.stringify(products));
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.setEx(cacheKey, 3600, JSON.stringify(products));
+    }
     res.status(200).json(new ApiResponse(200, products));
 });
 
@@ -29,7 +33,9 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
         productData.barcode = generateBarcode();
     }
     const product = await Product.create(productData);
-    await redisClient.del(`products:${req.tenantId}`);
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.del(`products:${req.tenantId}`);
+    }
     await Inventory.create({
         product: product._id,
         store: req.tenantId,
@@ -69,7 +75,9 @@ export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response
         { new: true, upsert: true }
     );
     // Invalidate cache
-    await redisClient.del(`products:${req.tenantId}`);
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.del(`products:${req.tenantId}`);
+    }
     res.status(200).json(new ApiResponse(200, { inventory: inv, reason }, 'Stock adjusted'));
 });
 
@@ -90,6 +98,8 @@ export const bulkImportProducts = asyncHandler(async (req: TenantRequest, res: R
             results.errors.push({ name: data.name, error: error.message });
         }
     }
-    await redisClient.del(`products:${req.tenantId}`);
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.del(`products:${req.tenantId}`);
+    }
     res.status(200).json(new ApiResponse(200, results, `Imported ${results.success} products`));
 });

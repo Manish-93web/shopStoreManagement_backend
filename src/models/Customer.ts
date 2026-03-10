@@ -6,6 +6,8 @@ export interface ICustomer extends Document {
     email?: string;
     address?: string;
     loyaltyPoints: number;
+    walletBalance: number;
+    segment: 'Retail' | 'Wholesale' | 'VIP';
     storeId: mongoose.Types.ObjectId; // Multi-tenancy
     createdAt: Date;
     updatedAt: Date;
@@ -17,6 +19,8 @@ const CustomerSchema: Schema = new Schema({
     email: { type: String },
     address: { type: String },
     loyaltyPoints: { type: Number, default: 0 },
+    walletBalance: { type: Number, default: 0 },
+    segment: { type: String, enum: ['Retail', 'Wholesale', 'VIP'], default: 'Retail' },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
 }, { timestamps: true });
 

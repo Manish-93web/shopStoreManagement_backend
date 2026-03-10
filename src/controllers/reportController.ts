@@ -110,16 +110,46 @@ export const queueReport = asyncHandler(async (req: TenantRequest, res: Response
     res.status(202).json(new ApiResponse(202, null, "Report generation job started in background"));
 });
 
-// @desc    Export report as Excel
+import PDFDocument from 'pdfkit';
+
+// @desc    Export report as Excel or PDF
 // @route   GET /api/reports/export
 export const exportReport = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { type, startDate, endDate } = req.query;
+    const { type, startDate, endDate, format = 'excel' } = req.query;
     const query: any = { storeId: req.tenantId };
 
     if (startDate && endDate) {
         query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
     }
 
+    if (format === 'pdf') {
+        const doc = new PDFDocument();
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=report-${type}-${Date.now()}.pdf`);
+
+        doc.pipe(res);
+        doc.fontSize(20).text(`RetailSync ${String(type).toUpperCase()} Report`, { align: 'center' });
+        doc.moveDown();
+
+        if (type === 'sales') {
+            const orders = await Order.find(query);
+            orders.forEach(order => {
+                doc.fontSize(12).text(`Order ID: ${order._id} | Total: ${order.grandTotal} | Date: ${new Date(order.createdAt).toLocaleDateString()}`);
+                doc.moveDown(0.5);
+            });
+        } else if (type === 'inventory') {
+            const items = await Inventory.find({ store: req.tenantId }).populate('product');
+            items.forEach((item: any) => {
+                doc.fontSize(12).text(`Product: ${item.product?.name} | SKU: ${item.product?.sku} | Stock: ${item.quantity}`);
+                doc.moveDown(0.5);
+            });
+        }
+
+        doc.end();
+        return;
+    }
+
+    // Default to Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Report');
 
@@ -154,3 +184,4 @@ export const exportReport = asyncHandler(async (req: TenantRequest, res: Respons
     await workbook.xlsx.write(res);
     res.end();
 });
+
