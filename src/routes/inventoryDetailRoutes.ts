@@ -10,5 +10,7 @@ router.use(protect, tenantHandler);
 router.get('/batches', inventoryDetailController.getBatches);
 router.get('/serials', inventoryDetailController.getSerials);
 router.put('/serials/status', inventoryDetailController.updateSerialStatus);
+router.get('/history', inventoryDetailController.getStockHistory);
+router.get('/low-stock', inventoryDetailController.getLowStockAlerts);
 
 export default router;

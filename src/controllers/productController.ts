@@ -7,6 +7,7 @@ import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import redisClient from '../config/redis.js';
 import AuditLog from '../models/AuditLog.js';
+import StockAdjustment from '../models/StockAdjustment.js';
 
 // @desc    Get all products for a tenant
 // @route   GET /api/products
@@ -110,12 +111,31 @@ export const deleteProduct = asyncHandler(async (req: TenantRequest, res: Respon
 // @desc    Manually adjust stock for a product
 // @route   PATCH /api/products/:id/adjust
 export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { quantity, reason } = req.body;
+    const { quantity, reason, notes } = req.body;
+
+    // First, get current inventory
+    const currentInv = await Inventory.findOne({ product: req.params.id, store: req.tenantId });
+    const previousQuantity = currentInv ? currentInv.quantity : 0;
+    const newQuantity = previousQuantity + quantity;
+
     const inv = await Inventory.findOneAndUpdate(
         { product: req.params.id, store: req.tenantId },
         { $inc: { quantity } },
         { new: true, upsert: true }
     );
+
+    // Write audit trail to StockAdjustment
+    await StockAdjustment.create({
+        storeId: req.tenantId,
+        productId: req.params.id,
+        previousQuantity,
+        newQuantity,
+        adjustmentAmount: quantity,
+        reason: reason || 'Correction',
+        notes: notes || '',
+        createdBy: req.user?._id
+    });
+
     // Invalidate cache
     if (process.env.SKIP_REDIS !== 'true') {
         await redisClient.del(`products:${req.tenantId}`);
