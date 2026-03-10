@@ -29,8 +29,6 @@ import rateLimit from 'express-rate-limit';
 import * as Sentry from "@sentry/node";
 import { sentryContextMiddleware } from './config/sentry.js';
 
-dotenv.config();
-
 const app: Application = express();
 
 // Middleware
