@@ -4,11 +4,11 @@ interface EmailOptions {
     to: string;
     subject: string;
     html: string;
+    templateName?: string;
 }
 
 export const sendEmail = async (options: EmailOptions) => {
     try {
-        // Configure using environment variables, or fallback to test/console transport
         const transporter = nodemailer.createTransport({
             host: process.env.SMTP_HOST || 'smtp.mailtrap.io',
             port: Number(process.env.SMTP_PORT) || 2525,
@@ -18,12 +18,15 @@ export const sendEmail = async (options: EmailOptions) => {
             },
         });
 
-        // If no real credentials, just log to console for development
+        // Enhanced logging for templates
         if (process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST) {
             console.log("-----------------------------------------");
-            console.log(`[MOCK EMAIL] To: ${options.to}`);
-            console.log(`[MOCK EMAIL] Subject: ${options.subject}`);
-            console.log(`[MOCK EMAIL] Body length: ${options.html.length} chars`);
+            console.log(`[EMAIL] To: ${options.to}`);
+            console.log(`[EMAIL] Subject: ${options.subject}`);
+            if (options.templateName) {
+                console.log(`[EMAIL] Template: ${options.templateName}`);
+            }
+            console.log(`[EMAIL] Body length: ${options.html.length} chars`);
             console.log("-----------------------------------------");
             return true;
         }

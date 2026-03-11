@@ -9,5 +9,8 @@ router.use(protect, tenantHandler);
 
 router.get('/', notificationController.getNotifications);
 router.put('/read-all', notificationController.markAsRead);
+router.get('/settings', notificationController.getSettings);
+router.put('/settings', notificationController.updateSettings);
+router.post('/send', notificationController.sendManual);
 
 export default router;

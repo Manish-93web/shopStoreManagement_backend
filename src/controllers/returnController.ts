@@ -2,7 +2,7 @@ import { Response } from 'express';
 import ReturnOrder from '../models/ReturnOrder.js';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
-import RefundTransaction from '../models/RefundTransaction.js';
+import PaymentTransaction from '../models/PaymentTransaction.js';
 import mongoose from 'mongoose';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 
@@ -50,15 +50,17 @@ export const returnController = {
 
             // 5. Create Refund Transaction (If method provided)
             if (refundAmount > 0) {
-                const refund = new RefundTransaction({
-                    refundNumber: `REF-${Date.now()}`,
+                const refund = new PaymentTransaction({
+                    transactionNumber: `REF-${Date.now()}`,
                     originalOrder: originalOrderId,
-                    returnOrder: returnOrder._id,
+                    returnOrderId: returnOrder._id,
                     storeId,
+                    type: 'Outflow',
+                    category: 'Refund',
                     amount: refundAmount,
-                    method: refundMethod || 'Original Method',
+                    method: refundMethod || 'Cash',
                     status: 'Completed',
-                    processedBy: req.user?._id
+                    performedBy: req.user?._id
                 });
                 await refund.save({ session });
                 returnOrder.refundStatus = 'Processed';

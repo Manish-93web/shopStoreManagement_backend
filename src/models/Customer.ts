@@ -9,6 +9,8 @@ export interface ICustomer extends Document {
     walletBalance: number;
     segment: 'Retail' | 'Wholesale' | 'VIP';
     storeId: mongoose.Types.ObjectId; // Multi-tenancy
+    notes?: string;
+    tags?: string[];
     createdAt: Date;
     updatedAt: Date;
 }
@@ -22,6 +24,8 @@ const CustomerSchema: Schema = new Schema({
     walletBalance: { type: Number, default: 0 },
     segment: { type: String, enum: ['Retail', 'Wholesale', 'VIP'], default: 'Retail' },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
+    notes: { type: String, default: "" },
+    tags: [{ type: String }],
 }, { timestamps: true });
 
 // Index for fast search

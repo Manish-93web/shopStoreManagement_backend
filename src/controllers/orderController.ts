@@ -9,6 +9,10 @@ import { TenantRequest } from '../middleware/tenantHandler.js';
 import { emitToStore } from '../config/socket.js';
 import { sendEmail } from '../utils/emailService.js';
 import { sendSMS } from '../utils/smsService.js';
+import PaymentTransaction from '../models/PaymentTransaction.js';
+import { notificationService } from '../services/notificationService.js';
+import Store from '../models/Store.js';
+import Loyalty from '../models/Loyalty.js';
 
 // ... (wait, targeting specific chunk)
 
@@ -54,6 +58,21 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
         paymentStatus: paymentDetails.reduce((acc: number, p: any) => acc + p.amount, 0) >= grandTotal ? 'Paid' : 'Partial'
     });
 
+    // Write accurate PaymentTransactions for Audit Tracing
+    const paymentOps = paymentDetails.map((paymentRaw: any) => ({
+        transactionNumber: `TXN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        storeId: req.tenantId,
+        orderId: order._id,
+        type: 'Inflow',
+        category: 'Sale',
+        method: paymentRaw.method,
+        amount: paymentRaw.amount,
+        status: 'Completed',
+        performedBy: req.user._id,
+        notes: `Payment for Order ${orderNumber}`
+    }));
+    await PaymentTransaction.insertMany(paymentOps);
+
     // 2. Handle Customer Loyalty
     if (customerId) {
         let loyalty = await Loyalty.findOne({ customer: customerId, storeId: req.tenantId });
@@ -97,24 +116,29 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
             customer.loyaltyPoints += (earnedPoints - (loyaltyPointsUsed || 0));
             await customer.save();
 
-            // Send Automated Notifications
-            if (customer.email) {
-                sendEmail({
-                    to: customer.email,
-                    subject: `Receipt for Order ${orderNumber}`,
-                    html: `<h2>Thank you for your purchase!</h2>
-                           <p>Order Number: <strong>${orderNumber}</strong></p>
-                           <p>Total Paid: <strong>${grandTotal}</strong></p>
-                           <p>We hope to see you again soon.</p>`
-                }).catch(console.log); // Fire and forget
-            }
-            if (customer.phone) {
-                sendSMS({
-                    to: customer.phone,
-                    body: `RetailSync: Thanks for your purchase! Order ${orderNumber} total is ${grandTotal}.`
-                }).catch(console.log);
-            }
+            // Send Automated Notifications via Central Service
+            await notificationService.send({
+                recipientId: customer._id.toString(),
+                storeId: req.tenantId!.toString(),
+                title: `Order Confirmed: ${orderNumber}`,
+                message: `Thank you for your purchase of ₹${grandTotal}. Your order has been successfully placed.`,
+                type: 'SUCCESS',
+                metadata: { orderId: order._id }
+            });
         }
+    }
+
+    // 3. Notify Store Owner about New Order
+    const store = await Store.findById(req.tenantId);
+    if (store) {
+        await notificationService.send({
+            recipientId: store.owner.toString(),
+            storeId: req.tenantId!.toString(),
+            title: `New Sale: ${orderNumber}`,
+            message: `A new sale of ₹${grandTotal} has been recorded by ${req.user.name}.`,
+            type: 'INFO',
+            metadata: { orderId: order._id }
+        });
     }
 
     // Reduce inventory for each item

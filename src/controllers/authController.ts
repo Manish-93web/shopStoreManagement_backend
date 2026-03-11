@@ -4,7 +4,7 @@ import Store from '../models/Store.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt.js';
-import AuditLog from '../models/AuditLog.js';
+import { logAudit } from '../utils/auditLogger.js';
 import jwt from 'jsonwebtoken';
 import OTP from '../models/OTP.js';
 import bcrypt from 'bcryptjs';
@@ -46,14 +46,13 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     await user.save();
 
     // Create Audit Log
-    await AuditLog.create({
+    await logAudit({
+        req,
         storeId: store._id,
         userId: user._id,
         action: 'REGISTER',
         entity: 'User',
-        entityId: user._id,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent']
+        entityId: user._id
     });
 
     res.status(201).json(new ApiResponse(201, {
@@ -77,6 +76,14 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 
     const user = await User.findOne({ email }).select('+password');
     if (!user || !(await user.comparePassword(password))) {
+        await logAudit({
+            req,
+            storeId: user?.storeId || null,
+            userId: user?._id || null,
+            action: 'LOGIN_FAILURE',
+            entity: 'User',
+            details: `Failed login attempt for email: ${email}`
+        });
         return res.status(401).json(new ApiResponse(401, null, "Invalid credentials"));
     }
 
@@ -87,14 +94,13 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     await user.save();
 
     // Create Audit Log
-    await AuditLog.create({
+    await logAudit({
+        req,
         storeId: user.storeId || (user.stores && user.stores[0]),
         userId: user._id,
         action: 'LOGIN',
         entity: 'User',
-        entityId: user._id,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent']
+        entityId: user._id
     });
 
     res.status(200).json(new ApiResponse(200, {

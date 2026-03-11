@@ -19,6 +19,12 @@ export interface IUser extends Document {
     storeId?: mongoose.Types.ObjectId; // For staff members
     isActive: boolean;
     refreshToken?: string;
+    notificationSettings?: {
+        inApp: boolean;
+        email: boolean;
+        sms: boolean;
+        whatsapp: boolean;
+    };
     comparePassword(password: string): Promise<boolean>;
 }
 
@@ -36,6 +42,12 @@ const UserSchema: Schema = new Schema({
     storeId: { type: Schema.Types.ObjectId, ref: 'Store' },
     isActive: { type: Boolean, default: true },
     refreshToken: { type: String },
+    notificationSettings: {
+        inApp: { type: Boolean, default: true },
+        email: { type: Boolean, default: true },
+        sms: { type: Boolean, default: false },
+        whatsapp: { type: Boolean, default: false },
+    },
 }, { timestamps: true });
 
 UserSchema.pre<IUser>('save', async function () {

@@ -7,6 +7,10 @@ import { createServer } from 'http';
 import { initSocket } from './config/socket.js';
 import { connectRedis } from './config/redis.js';
 import './workers/reportWorker.js';
+import { initNotificationWorker } from './workers/notificationWorker.js';
+
+// Initialize Workers
+initNotificationWorker();
 
 const PORT = process.env.PORT || 5000;
 const httpServer = createServer(app);

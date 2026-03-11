@@ -1,6 +1,9 @@
 import { Response } from 'express';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import Order from '../models/Order.js';
+import Product from '../models/Product.js';
+import Inventory from '../models/Inventory.js';
+import Customer from '../models/Customer.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import SupplierPayment from '../models/SupplierPayment.js';
 import Supplier from '../models/Supplier.js';
@@ -13,7 +16,6 @@ import dayjs from 'dayjs';
 export const getSalesPrediction = asyncHandler(async (req: TenantRequest, res: Response) => {
     const storeId = req.tenantId;
 
-    // Fetch last 30 days of orders
     const thirtyDaysAgo = dayjs().subtract(30, 'day').toDate();
     const orders = await Order.find({
         storeId,
@@ -24,11 +26,9 @@ export const getSalesPrediction = asyncHandler(async (req: TenantRequest, res: R
     const totalRevenue = orders.reduce((sum, order) => sum + order.grandTotal, 0);
     const dailyAverage = totalRevenue / 30;
 
-    // Generate 7-day prediction
     const prediction = [];
     for (let i = 1; i <= 7; i++) {
         const date = dayjs().add(i, 'day').format('YYYY-MM-DD');
-        // Add some "AI" randomness (+/- 10%)
         const variance = (Math.random() * 0.2) - 0.1;
         const predictedRevenue = dailyAverage * (1 + variance);
 
@@ -54,7 +54,6 @@ export const getCategoryAnalytics = asyncHandler(async (req: TenantRequest, res:
     const orders = await Order.find({ storeId, status: 'Completed' })
         .populate('items.product');
 
-    // Group sales by category
     const categorySales: Record<string, number> = {};
 
     orders.forEach(order => {
@@ -74,6 +73,66 @@ export const getCategoryAnalytics = asyncHandler(async (req: TenantRequest, res:
     })).sort((a, b) => b.value - a.value);
 
     res.status(200).json(new ApiResponse(200, result, "Category analytics generated"));
+});
+
+// @desc    Get Dashboard Summary
+// @route   GET /api/v1/analytics/summary
+export const getDashboardSummary = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const storeId = req.tenantId;
+    const today = dayjs().startOf('day').toDate();
+    const yesterday = dayjs().subtract(1, 'day').startOf('day').toDate();
+
+    const [todayOrders, yesterdayOrders, totalProducts, lowStockCount] = await Promise.all([
+        Order.find({ storeId, createdAt: { $gte: today }, status: 'Completed' }),
+        Order.find({ storeId, createdAt: { $gte: yesterday, $lt: today }, status: 'Completed' }),
+        Product.countDocuments({ storeId }),
+        Inventory.countDocuments({ store: storeId, quantity: { $lte: 10 } })
+    ]);
+
+    const todayRevenue = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
+    const yesterdayRevenue = yesterdayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
+
+    const revenueGrowth = yesterdayRevenue > 0
+        ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100
+        : 0;
+
+    res.status(200).json(new ApiResponse(200, {
+        today: {
+            revenue: todayRevenue,
+            orders: todayOrders.length,
+        },
+        revenueGrowth: Math.round(revenueGrowth),
+        totalProducts,
+        lowStockCount
+    }));
+});
+
+// @desc    Get Customer Retention Stats
+// @route   GET /api/v1/analytics/retention
+export const getRetentionStats = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const storeId = req.tenantId;
+
+    const customers = await Customer.find({ storeId });
+    const orders = await Order.find({ storeId, status: 'Completed' });
+
+    const orderCounts: Record<string, number> = {};
+    orders.forEach(order => {
+        if (order.customer) {
+            const cid = order.customer.toString();
+            orderCounts[cid] = (orderCounts[cid] || 0) + 1;
+        }
+    });
+
+    const stats = {
+        totalCustomers: customers.length,
+        repeatCustomers: Object.values(orderCounts).filter(count => count > 1).length,
+        oneTimeCustomers: Object.values(orderCounts).filter(count => count === 1).length,
+        retentionRate: customers.length > 0
+            ? (Object.values(orderCounts).filter(count => count > 1).length / customers.length) * 100
+            : 0
+    };
+
+    res.status(200).json(new ApiResponse(200, stats));
 });
 
 // @desc    Get Supplier Performance Analytics

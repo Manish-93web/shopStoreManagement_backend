@@ -2,18 +2,20 @@ import { Response } from 'express';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 import Inventory from '../models/Inventory.js';
+import Customer from '../models/Customer.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import { addReportJob } from '../queues/reportQueue.js';
 import ExcelJS from 'exceljs';
+import PDFDocument from 'pdfkit';
 
 // @desc    Get sales analytics for store
 // @route   GET /api/reports/sales
 export const getSalesReport = asyncHandler(async (req: TenantRequest, res: Response) => {
     const { startDate, endDate } = req.query;
 
-    const query: any = { storeId: req.tenantId };
+    const query: any = { storeId: req.tenantId, status: 'Completed' };
     if (startDate && endDate) {
         query.createdAt = {
             $gte: new Date(startDate as string),
@@ -27,7 +29,9 @@ export const getSalesReport = asyncHandler(async (req: TenantRequest, res: Respo
         totalRevenue: orders.reduce((acc, o) => acc + o.grandTotal, 0),
         totalOrders: orders.length,
         totalItemsSold: orders.reduce((acc, o) => acc + o.items.reduce((sum, i) => sum + i.quantity, 0), 0),
-        averageOrderValue: orders.length > 0 ? orders.reduce((acc, o) => acc + o.grandTotal, 0) / orders.length : 0
+        averageOrderValue: orders.length > 0 ? orders.reduce((acc, o) => acc + o.grandTotal, 0) / orders.length : 0,
+        taxTotal: orders.reduce((acc, o) => acc + (o.taxTotal || 0), 0),
+        discountTotal: orders.reduce((acc, o) => acc + (o.discountTotal || 0), 0)
     };
 
     res.status(200).json(new ApiResponse(200, stats));
@@ -37,7 +41,7 @@ export const getSalesReport = asyncHandler(async (req: TenantRequest, res: Respo
 // @route   GET /api/reports/profit
 export const getProfitReport = asyncHandler(async (req: TenantRequest, res: Response) => {
     const { startDate, endDate } = req.query;
-    const query: any = { storeId: req.tenantId };
+    const query: any = { storeId: req.tenantId, status: 'Completed' };
 
     if (startDate && endDate) {
         query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
@@ -68,7 +72,7 @@ export const getProfitReport = asyncHandler(async (req: TenantRequest, res: Resp
 // @route   GET /api/reports/tax
 export const getTaxReport = asyncHandler(async (req: TenantRequest, res: Response) => {
     const { startDate, endDate } = req.query;
-    const query: any = { storeId: req.tenantId };
+    const query: any = { storeId: req.tenantId, status: 'Completed' };
 
     if (startDate && endDate) {
         query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
@@ -83,6 +87,96 @@ export const getTaxReport = asyncHandler(async (req: TenantRequest, res: Respons
     }, { totalTax: 0, taxableAmount: 0 });
 
     res.status(200).json(new ApiResponse(200, taxSummary));
+});
+
+// @desc    Get inventory valuation report
+// @route   GET /api/reports/inventory
+export const getInventoryReport = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const inventory = await Inventory.find({ store: req.tenantId }).populate('product');
+
+    const stats = inventory.reduce((acc, item: any) => {
+        const cost = (item.product?.costPrice || 0) * item.quantity;
+        const value = (item.product?.price || 0) * item.quantity;
+        acc.totalItems += item.quantity;
+        acc.totalCostValue += cost;
+        acc.totalRetailValue += value;
+        acc.potentialProfit += (value - cost);
+        return acc;
+    }, { totalItems: 0, totalCostValue: 0, totalRetailValue: 0, potentialProfit: 0 });
+
+    res.status(200).json(new ApiResponse(200, stats));
+});
+
+// @desc    Get customer insights report
+// @route   GET /api/reports/customers
+export const getCustomerReport = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { startDate, endDate } = req.query;
+    const query: any = { storeId: req.tenantId, status: 'Completed' };
+
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
+    }
+
+    const orders = await Order.find(query).populate('customer');
+
+    const customerStats: Record<string, any> = {};
+
+    orders.forEach(order => {
+        if (order.customer) {
+            const customerId = order.customer._id.toString();
+            if (!customerStats[customerId]) {
+                customerStats[customerId] = {
+                    name: (order.customer as any).name,
+                    phone: (order.customer as any).phone,
+                    orderCount: 0,
+                    totalSpent: 0
+                };
+            }
+            customerStats[customerId].orderCount += 1;
+            customerStats[customerId].totalSpent += order.grandTotal;
+        }
+    });
+
+    const topCustomers = Object.values(customerStats)
+        .sort((a: any, b: any) => b.totalSpent - a.totalSpent)
+        .slice(0, 10);
+
+    const totalCustomers = await Customer.countDocuments({ storeId: req.tenantId });
+
+    res.status(200).json(new ApiResponse(200, {
+        totalCustomers,
+        activeCustomersInPeriod: Object.keys(customerStats).length,
+        topCustomers
+    }));
+});
+
+// @desc    Get revenue trends (Revenue report)
+// @route   GET /api/reports/revenue
+export const getRevenueReport = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { startDate, endDate, interval = 'day' } = req.query;
+    const query: any = { storeId: req.tenantId, status: 'Completed' };
+
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
+    }
+
+    const orders = await Order.find(query);
+
+    // Grouping logic for trends
+    const trends: Record<string, number> = {};
+    orders.forEach(order => {
+        const date = new Date(order.createdAt);
+        let key = '';
+        if (interval === 'day') key = date.toISOString().split('T')[0];
+        else if (interval === 'hour') key = `${date.toISOString().split('T')[0]} ${date.getHours()}:00`;
+        else if (interval === 'month') key = `${date.getFullYear()}-${date.getMonth() + 1}`;
+
+        trends[key] = (trends[key] || 0) + order.grandTotal;
+    });
+
+    const result = Object.entries(trends).map(([name, total]) => ({ name, total }));
+
+    res.status(200).json(new ApiResponse(200, result));
 });
 
 // @desc    Get low stock alert report
@@ -101,22 +195,22 @@ export const getLowStockReport = asyncHandler(async (req: TenantRequest, res: Re
 // @desc    Queue background report generation
 // @route   POST /api/reports/queue
 export const queueReport = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { type, filters } = req.body;
+    const { type, filters, format = 'pdf' } = req.body;
     await addReportJob({
         tenantId: req.tenantId as any,
         type,
-        filters
+        filters,
+        format,
+        userId: (req as any).user?._id
     });
     res.status(202).json(new ApiResponse(202, null, "Report generation job started in background"));
 });
 
-import PDFDocument from 'pdfkit';
-
-// @desc    Export report as Excel or PDF
+// @desc    Export report as Excel, PDF or CSV
 // @route   GET /api/reports/export
 export const exportReport = asyncHandler(async (req: TenantRequest, res: Response) => {
     const { type, startDate, endDate, format = 'excel' } = req.query;
-    const query: any = { storeId: req.tenantId };
+    const query: any = { storeId: req.tenantId, status: 'Completed' };
 
     if (startDate && endDate) {
         query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
@@ -134,54 +228,78 @@ export const exportReport = asyncHandler(async (req: TenantRequest, res: Respons
         if (type === 'sales') {
             const orders = await Order.find(query);
             orders.forEach(order => {
-                doc.fontSize(12).text(`Order ID: ${order._id} | Total: ${order.grandTotal} | Date: ${new Date(order.createdAt).toLocaleDateString()}`);
+                doc.fontSize(10).text(`Order ID: ${order.orderNumber} | Total: ${order.grandTotal.toFixed(2)} | Date: ${new Date(order.createdAt).toLocaleDateString()}`);
                 doc.moveDown(0.5);
             });
         } else if (type === 'inventory') {
             const items = await Inventory.find({ store: req.tenantId }).populate('product');
             items.forEach((item: any) => {
-                doc.fontSize(12).text(`Product: ${item.product?.name} | SKU: ${item.product?.sku} | Stock: ${item.quantity}`);
+                doc.fontSize(10).text(`Product: ${item.product?.name} | SKU: ${item.product?.sku} | Stock: ${item.quantity}`);
                 doc.moveDown(0.5);
             });
+        } else if (type === 'profit') {
+            const orders = await Order.find(query).populate('items.product');
+            let revenue = 0; let cost = 0;
+            orders.forEach(o => {
+                revenue += o.grandTotal;
+                o.items.forEach((i: any) => cost += (i.product?.costPrice || 0) * i.quantity);
+            });
+            doc.fontSize(12).text(`Total Revenue: ${revenue.toFixed(2)}`);
+            doc.text(`Total Cost: ${cost.toFixed(2)}`);
+            doc.text(`Gross Profit: ${(revenue - cost).toFixed(2)}`);
         }
 
         doc.end();
         return;
     }
 
-    // Default to Excel
+    // Excel and CSV (CSV via ExcelJS)
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Report');
 
     if (type === 'sales') {
         const orders = await Order.find(query);
         worksheet.columns = [
-            { header: 'Order ID', key: '_id', width: 30 },
-            { header: 'Customer', key: 'customer', width: 20 },
-            { header: 'Total', key: 'grandTotal', width: 15 },
-            { header: 'Date', key: 'createdAt', width: 20 }
+            { header: 'Order Number', key: 'orderNumber', width: 20 },
+            { header: 'Subtotal', key: 'subTotal', width: 15 },
+            { header: 'Tax', key: 'taxTotal', width: 15 },
+            { header: 'Grand Total', key: 'grandTotal', width: 15 },
+            { header: 'Status', key: 'status', width: 15 },
+            { header: 'Date', key: 'createdAt', width: 25 }
         ];
-        orders.forEach(order => worksheet.addRow(order));
+        orders.forEach(order => worksheet.addRow({
+            ...order.toObject(),
+            createdAt: order.createdAt.toISOString()
+        }));
     } else if (type === 'inventory') {
         const items = await Inventory.find({ store: req.tenantId }).populate('product');
         worksheet.columns = [
-            { header: 'Product', key: 'productName', width: 30 },
+            { header: 'Product Name', key: 'productName', width: 30 },
             { header: 'SKU', key: 'sku', width: 15 },
-            { header: 'Stock', key: 'quantity', width: 15 }
+            { header: 'Stock Quantity', key: 'quantity', width: 15 },
+            { header: 'Cost Price', key: 'costPrice', width: 15 },
+            { header: 'Retail Price', key: 'price', width: 15 }
         ];
         items.forEach((item: any) => {
             worksheet.addRow({
                 productName: item.product?.name,
                 sku: item.product?.sku,
-                quantity: item.quantity
+                quantity: item.quantity,
+                costPrice: item.product?.costPrice,
+                price: item.product?.price
             });
         });
     }
 
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=report-${type}-${Date.now()}.xlsx`);
-
-    await workbook.xlsx.write(res);
+    if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=report-${type}-${Date.now()}.csv`);
+        await workbook.csv.write(res);
+    } else {
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=report-${type}-${Date.now()}.xlsx`);
+        await workbook.xlsx.write(res);
+    }
     res.end();
 });
 

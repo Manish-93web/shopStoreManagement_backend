@@ -8,6 +8,8 @@ import { TenantRequest } from '../middleware/tenantHandler.js';
 import redisClient from '../config/redis.js';
 import AuditLog from '../models/AuditLog.js';
 import StockAdjustment from '../models/StockAdjustment.js';
+import { notificationService } from '../services/notificationService.js';
+import Store from '../models/Store.js';
 
 // @desc    Get all products for a tenant
 // @route   GET /api/products
@@ -137,9 +139,22 @@ export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response
     });
 
     // Invalidate cache
-    if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.del(`products:${req.tenantId}`);
+    // 3. Check for Low Stock Notification
+    if (newQuantity <= 5) {
+        const store = await Store.findById(req.tenantId);
+        const product = await Product.findById(req.params.id);
+        if (store && product) {
+            await notificationService.send({
+                recipientId: store.owner.toString(),
+                storeId: req.tenantId!.toString(),
+                title: `Low Stock Alert`,
+                message: `"${product.name}" is running low (${newQuantity} units remaining).`,
+                type: 'WARNING',
+                metadata: { productId: product._id }
+            });
+        }
     }
+
     res.status(200).json(new ApiResponse(200, { inventory: inv, reason }, 'Stock adjusted'));
 });
 

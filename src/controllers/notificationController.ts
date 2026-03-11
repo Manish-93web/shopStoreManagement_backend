@@ -1,23 +1,8 @@
 import { Response } from 'express';
 import Notification from '../models/Notification.js';
+import User from '../models/User.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
-import nodemailer from 'nodemailer';
-import twilio from 'twilio';
-
-// Initialize stubs
-const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-    }
-});
-
-const twilioClient = twilio(
-    process.env.TWILIO_ACCOUNT_SID || 'AC_STUB',
-    process.env.TWILIO_AUTH_TOKEN || 'TOKEN_STUB'
-);
+import { notificationService } from '../services/notificationService.js';
 
 export const notificationController = {
     getNotifications: async (req: TenantRequest, res: Response) => {
@@ -44,57 +29,44 @@ export const notificationController = {
         }
     },
 
-    // Utility for internal and external triggers
-    sendNotification: async (data: {
-        recipient: string;
-        recipientEmail?: string;
-        recipientPhone?: string;
-        storeId: string;
-        title: string;
-        message: string;
-        type?: 'INFO' | 'WARNING' | 'ERROR' | 'SUCCESS';
-        channels?: ('In-App' | 'Email' | 'SMS')[];
-    }) => {
-        const channels = data.channels || ['In-App'];
+    getSettings: async (req: TenantRequest, res: Response) => {
+        try {
+            const user = await User.findById(req.user?._id).select('notificationSettings');
+            res.json({ success: true, data: user?.notificationSettings });
+        } catch (error: any) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
 
-        // 1. In-App Notification
-        if (channels.includes('In-App')) {
-            const notification = new Notification({
-                recipient: data.recipient,
-                storeId: data.storeId,
-                title: data.title,
-                message: data.message,
-                type: data.type || 'INFO',
-                channels: ['In-App']
+    updateSettings: async (req: TenantRequest, res: Response) => {
+        try {
+            const { inApp, email, sms, whatsapp } = req.body;
+            await User.findByIdAndUpdate(req.user?._id, {
+                $set: {
+                    notificationSettings: { inApp, email, sms, whatsapp }
+                }
             });
-            await notification.save();
+            res.json({ success: true, message: "Notification settings updated" });
+        } catch (error: any) {
+            res.status(500).json({ success: false, message: error.message });
         }
+    },
 
-        // 2. Email Notification
-        if (channels.includes('Email') && data.recipientEmail) {
-            try {
-                await transporter.sendMail({
-                    from: '"RetailSync Pro" <alerts@retailsync.com>',
-                    to: data.recipientEmail,
-                    subject: data.title,
-                    text: data.message
-                });
-            } catch (err) {
-                console.error("Email failed:", err);
-            }
-        }
-
-        // 3. SMS Notification
-        if (channels.includes('SMS') && data.recipientPhone) {
-            try {
-                await twilioClient.messages.create({
-                    body: `${data.title}: ${data.message}`,
-                    from: process.env.TWILIO_PHONE_NUMBER,
-                    to: data.recipientPhone
-                });
-            } catch (err) {
-                console.error("SMS failed:", err);
-            }
+    // Bridge for manual triggers if needed via API
+    sendManual: async (req: TenantRequest, res: Response) => {
+        try {
+            const { recipientId, title, message, type, actionUrl } = req.body;
+            await notificationService.send({
+                recipientId,
+                storeId: req.tenantId!,
+                title,
+                message,
+                type,
+                actionUrl
+            });
+            res.json({ success: true, message: "Notification queued" });
+        } catch (error: any) {
+            res.status(500).json({ success: false, message: error.message });
         }
     }
 };

@@ -31,26 +31,41 @@ import webhookRoutes from './routes/webhookRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import superAdminRoutes from './routes/superAdminRoutes.js';
 import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
+import mongoSanitize from 'express-mongo-sanitize';
 import * as Sentry from "@sentry/node";
 import { sentryContextMiddleware } from './config/sentry.js';
 
 const app: Application = express();
 
+// Security Middleware
+app.use(helmet());
+app.use(mongoSanitize());
+
 // Middleware
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10kb' })); // Body limit
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 app.use(sentryContextMiddleware);
 
 // Rate Limiting
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
+    max: 100,
     standardHeaders: true,
     legacyHeaders: false,
     message: 'Too many requests from this IP, please try again after 15 minutes'
 });
+
+const authLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 20, // 20 attempts per hour
+    message: 'Too many login attempts, please try again after an hour'
+});
+
 app.use('/api/v1', limiter);
+app.use('/api/v1/auth/login', authLimiter);
+app.use('/api/v1/auth/register', authLimiter);
 
 // API v1 Routes
 const v1 = express.Router();
