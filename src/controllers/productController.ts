@@ -10,22 +10,45 @@ import AuditLog from '../models/AuditLog.js';
 import StockAdjustment from '../models/StockAdjustment.js';
 import { notificationService } from '../services/notificationService.js';
 import Store from '../models/Store.js';
+import webhookService from '../services/webhookService.js';
 
 // @desc    Get all products for a tenant
 // @route   GET /api/products
 export const getProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const cacheKey = `products:${req.tenantId}`;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const skip = (page - 1) * limit;
+
+    const cacheKey = `products:${req.tenantId}:p${page}:l${limit}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cachedProducts = await redisClient.get(cacheKey);
         if (cachedProducts) {
             return res.status(200).json(new ApiResponse(200, JSON.parse(cachedProducts), "Products fetched from cache"));
         }
     }
-    const products = await Product.find({ storeId: req.tenantId }).populate('category');
+
+    const products = await Product.find({ storeId: req.tenantId })
+        .populate('category')
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+    const total = await Product.countDocuments({ storeId: req.tenantId });
+
+    const response = {
+        products,
+        pagination: {
+            total,
+            page,
+            limit,
+            pages: Math.ceil(total / limit)
+        }
+    };
+
     if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.setEx(cacheKey, 3600, JSON.stringify(products));
+        await redisClient.setEx(cacheKey, 3600, JSON.stringify(response));
     }
-    res.status(200).json(new ApiResponse(200, products));
+    res.status(200).json(new ApiResponse(200, response));
 });
 
 // @desc    Create a new product
@@ -48,13 +71,17 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
 
     // Audit Log
     await AuditLog.create({
-        user: req.user?._id,
+        userId: req.user?._id,
         storeId: req.tenantId,
         action: 'CREATED_PRODUCT',
-        details: `Product "${product.name}" (${product.sku}) created.`,
+        entity: 'Product',
+        entityId: product._id as any,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent']
     });
+
+    // Trigger Webhooks
+    webhookService.trigger('product.created', req.tenantId!.toString(), product);
 
     res.status(201).json(new ApiResponse(201, product, "Product created successfully"));
 });
@@ -74,13 +101,18 @@ export const updateProduct = asyncHandler(async (req: TenantRequest, res: Respon
 
     // Audit Log
     await AuditLog.create({
-        user: req.user?._id,
+        userId: req.user?._id,
         storeId: req.tenantId,
         action: 'UPDATED_PRODUCT',
+        entity: 'Product',
+        entityId: product._id as any,
         details: `Product "${product.name}" updated.`,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent']
     });
+
+    // Trigger Webhooks
+    webhookService.trigger('product.updated', req.tenantId!.toString(), product);
 
     res.status(200).json(new ApiResponse(200, product, "Product updated successfully"));
 });
@@ -99,9 +131,11 @@ export const deleteProduct = asyncHandler(async (req: TenantRequest, res: Respon
 
     // Audit Log
     await AuditLog.create({
-        user: req.user?._id,
+        userId: req.user?._id,
         storeId: req.tenantId,
         action: 'DELETED_PRODUCT',
+        entity: 'Product',
+        entityId: product._id as any,
         details: `Product "${product.name}" deleted.`,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent']
@@ -129,7 +163,7 @@ export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response
     // Write audit trail to StockAdjustment
     await StockAdjustment.create({
         storeId: req.tenantId,
-        productId: req.params.id,
+        productId: req.params.id as any,
         previousQuantity,
         newQuantity,
         adjustmentAmount: quantity,
@@ -205,9 +239,10 @@ export const bulkUpdateProducts = asyncHandler(async (req: TenantRequest, res: R
     }
 
     await AuditLog.create({
-        user: req.user?._id,
+        userId: req.user?._id,
         storeId: req.tenantId,
         action: 'UPDATED_PRODUCT',
+        entity: 'Product',
         details: `Bulk updated ${results.success} products.`,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent']

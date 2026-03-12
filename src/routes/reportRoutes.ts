@@ -9,6 +9,9 @@ import {
     getInventoryReport,
     getCustomerReport,
     getRevenueReport,
+    getTaxComplianceReport,
+    getSalesAuditTrail,
+    getInventoryAuditReport,
     queueReport,
     exportReport
 } from '../controllers/reportController.js';
@@ -24,6 +27,9 @@ router.get('/tax', getTaxReport);
 router.get('/inventory', getInventoryReport);
 router.get('/customers', getCustomerReport);
 router.get('/revenue', getRevenueReport);
+router.get('/tax-compliance', getTaxComplianceReport);
+router.get('/audit/sales', getSalesAuditTrail);
+router.get('/audit/inventory', getInventoryAuditReport);
 router.get('/export', exportReport);
 router.post('/queue', queueReport);
 

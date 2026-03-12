@@ -10,6 +10,9 @@ export interface IStore extends Document {
         symbol: string;
     };
     timezone: string;
+    address?: string;
+    phone?: string;
+    email?: string;
     isActive: boolean;
     subscriptionPlan: mongoose.Types.ObjectId;
     subscriptionStatus: 'Active' | 'Past Due' | 'Cancelled' | 'Trialing';
@@ -48,5 +51,8 @@ const StoreSchema: Schema = new Schema({
     currentProductsCount: { type: Number, default: 0 },
     lastBillingDate: { type: Date },
 }, { timestamps: true });
+
+StoreSchema.index({ owner: 1 });
+StoreSchema.index({ isActive: 1 });
 
 export default mongoose.model<IStore>('Store', StoreSchema);

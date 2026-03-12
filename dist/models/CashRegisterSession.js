@@ -16,5 +16,14 @@ const CashRegisterSessionSchema = new Schema({
         }],
     status: { type: String, enum: ['Open', 'Closed'], default: 'Open' },
     notes: { type: String },
+    shiftSummary: {
+        totalSales: { type: Number, default: 0 },
+        totalOrders: { type: Number, default: 0 },
+        cashSales: { type: Number, default: 0 },
+        cardSales: { type: Number, default: 0 },
+        upiSales: { type: Number, default: 0 },
+        walletSales: { type: Number, default: 0 },
+        refunds: { type: Number, default: 0 }
+    }
 }, { timestamps: true });
 export default mongoose.model('CashRegisterSession', CashRegisterSessionSchema);

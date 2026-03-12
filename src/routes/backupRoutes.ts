@@ -9,5 +9,7 @@ router.use(protect, tenantHandler);
 
 router.get('/export', authorize('Owner'), backupController.exportData);
 router.get('/history', authorize('Owner'), backupController.getBackupHistory);
+router.post('/trigger', authorize('Owner'), backupController.triggerBackup);
+router.post('/restore/:id', authorize('Owner'), backupController.restoreBackup);
 
 export default router;

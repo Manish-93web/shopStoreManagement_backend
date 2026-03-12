@@ -25,4 +25,7 @@ const OrderSchema = new Schema({
     paymentStatus: { type: String, enum: ['Unpaid', 'Paid', 'Partial'], default: 'Paid' },
     cashier: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true });
+OrderSchema.index({ storeId: 1, createdAt: -1 });
+OrderSchema.index({ orderNumber: 1 });
+OrderSchema.index({ customer: 1 });
 export default mongoose.model('Order', OrderSchema);

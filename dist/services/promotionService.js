@@ -1,0 +1,77 @@
+import Coupon from '../models/Coupon.js';
+import PromotionRule from '../models/PromotionRule.js';
+import Order from '../models/Order.js';
+export const promotionService = {
+    /**
+     * Validate and Apply Coupon
+     */
+    validateCoupon: async (code, cartTotal, customerId, storeId) => {
+        const coupon = await Coupon.findOne({
+            code: code.toUpperCase(),
+            storeId,
+            isActive: true,
+            validFrom: { $lte: new Date() },
+            validTo: { $gte: new Date() }
+        });
+        if (!coupon)
+            throw new Error("Invalid or expired coupon code");
+        // Usage Limits Check
+        if (coupon.usageLimitTotal && coupon.usageCount >= coupon.usageLimitTotal) {
+            throw new Error("Coupon usage limit reached");
+        }
+        if (customerId && coupon.usageLimitPerCustomer) {
+            const customerUsage = await Order.countDocuments({
+                customer: customerId,
+                storeId,
+                'discountDetails.code': code.toUpperCase()
+            });
+            if (customerUsage >= coupon.usageLimitPerCustomer) {
+                throw new Error("You have already used this coupon");
+            }
+        }
+        if (cartTotal < coupon.minPurchaseAmount) {
+            throw new Error(`Minimum purchase of ₹${coupon.minPurchaseAmount} required`);
+        }
+        let discountAmount = 0;
+        if (coupon.discountType === 'Percentage') {
+            discountAmount = (cartTotal * coupon.discountValue) / 100;
+            if (coupon.maxDiscountAmount && discountAmount > coupon.maxDiscountAmount) {
+                discountAmount = coupon.maxDiscountAmount;
+            }
+        }
+        else {
+            discountAmount = coupon.discountValue;
+        }
+        return {
+            couponId: coupon._id,
+            discountAmount,
+            type: coupon.discountType,
+            value: coupon.discountValue
+        };
+    },
+    /**
+     * Get Best Automatic Promotion
+     */
+    evaluateAutomaticPromotions: async (cartTotal, cartItems, storeId) => {
+        const rules = await PromotionRule.find({ storeId, isActive: true }).sort({ priority: -1 });
+        // Simple implementation: choose first applicable rule by priority
+        for (const rule of rules) {
+            if (rule.triggerType === 'TotalCartValue' && cartTotal >= rule.threshold) {
+                let discountAmount = 0;
+                if (rule.discountType === 'Percentage') {
+                    discountAmount = (cartTotal * rule.discountValue) / 100;
+                }
+                else {
+                    discountAmount = rule.discountValue;
+                }
+                return {
+                    ruleId: rule._id,
+                    name: rule.name,
+                    discountAmount
+                };
+            }
+            // Add custom logic for ProductSpecific/CategorySpecific triggers here
+        }
+        return null;
+    }
+};

@@ -4,12 +4,16 @@ const redisClient = createClient({
 });
 redisClient.on('error', (err) => console.log('Redis Client Error', err));
 export const connectRedis = async () => {
+    if (process.env.SKIP_REDIS === 'true') {
+        console.log('Redis skipped (SKIP_REDIS=true)');
+        return;
+    }
     try {
         await redisClient.connect();
         console.log('Redis Connected');
     }
     catch (error) {
-        console.error('Redis connection failed:', error);
+        console.error('Redis connection failed. Performance might be affected.');
     }
 };
 export default redisClient;

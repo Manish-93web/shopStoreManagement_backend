@@ -30,7 +30,7 @@ export const createVariant = asyncHandler(async (req: TenantRequest, res: Respon
 
     // Initialize inventory for this variant
     await Inventory.create({
-        product: productId,
+        product: productId as any,
         variant: variant._id,
         store: req.tenantId,
         quantity: req.body.initialStock || 0
@@ -61,7 +61,7 @@ export const deleteVariant = asyncHandler(async (req: TenantRequest, res: Respon
     if (!variant) return res.status(404).json(new ApiResponse(404, null, "Variant not found"));
 
     // Cleanup inventory
-    await Inventory.deleteMany({ variant: req.params.id });
+    await Inventory.deleteMany({ variant: req.params.id as any });
 
     // Check if any variants left
     const remainingCount = await ProductVariant.countDocuments({ productId: variant.productId });

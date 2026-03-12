@@ -23,6 +23,7 @@ import settingsRoutes from './routes/settingsRoutes.js';
 import sessionRoutes from './routes/sessionRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import inventoryDetailRoutes from './routes/inventoryDetailRoutes.js';
+import hardwareRoutes from './routes/hardwareRoutes.js';
 import backupRoutes from './routes/backupRoutes.js';
 import searchRoutes from './routes/searchRoutes.js';
 import importRoutes from './routes/importRoutes.js';
@@ -30,9 +31,17 @@ import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import webhookRoutes from './routes/webhookRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import superAdminRoutes from './routes/superAdminRoutes.js';
+import archiveRoutes from './routes/archiveRoutes.js';
+import promotionRoutes from './routes/promotionRoutes.js';
+import currencyRoutes from './routes/currencyRoutes.js';
+import apiKeyRoutes from './routes/apiKeyRoutes.js';
+import publicApiRoutes from './routes/publicApiRoutes.js';
+import featureFlagRoutes from './routes/featureFlagRoutes.js';
+import themeRoutes from './routes/themeRoutes.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import mongoSanitize from 'express-mongo-sanitize';
+import compression from 'compression';
 import * as Sentry from "@sentry/node";
 import { sentryContextMiddleware } from './config/sentry.js';
 
@@ -41,6 +50,7 @@ const app: Application = express();
 // Security Middleware
 app.use(helmet());
 app.use(mongoSanitize());
+app.use(compression());
 
 // Middleware
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
@@ -100,16 +110,23 @@ v1.use('/returns', returnRoutes);
 v1.use('/sessions', sessionRoutes);
 v1.use('/notifications', notificationRoutes);
 v1.use('/inventory-details', inventoryDetailRoutes);
+v1.use('/hardware', hardwareRoutes);
 v1.use('/backup', backupRoutes);
 v1.use('/search', searchRoutes);
 v1.use('/import', importRoutes);
 v1.use('/subscriptions', subscriptionRoutes);
 v1.use('/webhooks', webhookRoutes);
+v1.use('/api-keys', apiKeyRoutes);
+v1.use('/feature-flags', featureFlagRoutes);
+v1.use('/theme', themeRoutes);
 
 // Reporting
 v1.use('/reports', reportRoutes);
 v1.use('/analytics', analyticsRoutes);
 v1.use('/super-admin', superAdminRoutes);
+v1.use('/archive', archiveRoutes);
+v1.use('/promotions', promotionRoutes);
+v1.use('/currencies', currencyRoutes);
 
 // Expansion Pack
 v1.use('/brands', brandRoutes);
@@ -117,6 +134,9 @@ v1.use('/tax-rules', taxRuleRoutes);
 v1.use('/settings', settingsRoutes);
 
 app.use('/api/v1', v1);
+
+// Public API explicitly decoupled from auth middleware internally
+app.use('/api/public/v1', publicApiRoutes);
 
 // Health Check
 app.get('/health', (_req: Request, res: Response) => {

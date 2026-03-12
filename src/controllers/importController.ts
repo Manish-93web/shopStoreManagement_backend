@@ -24,9 +24,9 @@ export const importController = {
         if (req.file.originalname.toLowerCase().endsWith('.csv')) {
             const stream = new PassThrough();
             stream.end(buffer);
-            await workbook.csv.read(stream);
+            await workbook.csv.read(stream as any);
         } else {
-            await workbook.xlsx.load(buffer);
+            await workbook.xlsx.load(buffer as any);
         }
 
         const worksheet = workbook.getWorksheet(1);
@@ -65,7 +65,7 @@ export const importController = {
                         name,
                         sku,
                         barcode,
-                        category: category._id,
+                        category: category?._id,
                         price,
                         costPrice,
                         taxRate,

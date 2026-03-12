@@ -5,7 +5,11 @@ const CustomerSchema = new Schema({
     email: { type: String },
     address: { type: String },
     loyaltyPoints: { type: Number, default: 0 },
+    walletBalance: { type: Number, default: 0 },
+    segment: { type: String, enum: ['Retail', 'Wholesale', 'VIP'], default: 'Retail' },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
+    notes: { type: String, default: "" },
+    tags: [{ type: String }],
 }, { timestamps: true });
 // Index for fast search
 CustomerSchema.index({ phone: 1, storeId: 1 }, { unique: true });

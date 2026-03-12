@@ -66,4 +66,8 @@ const OrderSchema: Schema = new Schema({
     cashier: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true });
 
+OrderSchema.index({ storeId: 1, createdAt: -1 });
+OrderSchema.index({ orderNumber: 1 });
+OrderSchema.index({ customer: 1 });
+
 export default mongoose.model<IOrder>('Order', OrderSchema);

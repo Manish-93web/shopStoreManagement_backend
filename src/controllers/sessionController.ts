@@ -1,6 +1,8 @@
 import { Response } from 'express';
 import CashRegisterSession from '../models/CashRegisterSession.js';
+import Order from '../models/Order.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
+import ApiResponse from '../utils/apiResponse.js';
 
 export const sessionController = {
     openSession: async (req: TenantRequest, res: Response) => {
@@ -14,7 +16,7 @@ export const sessionController = {
                 cashier: cashierId,
                 status: 'Open'
             });
-            if (activeSession) return res.status(400).json({ message: "You already have an active session." });
+            if (activeSession) return res.status(400).json(new ApiResponse(400, null, "You already have an active session."));
 
             const sessionNumber = `REG-${Date.now()}`;
             const session = new CashRegisterSession({
@@ -28,9 +30,9 @@ export const sessionController = {
             });
 
             await session.save();
-            res.status(201).json({ success: true, data: session });
+            res.status(201).json(new ApiResponse(201, session, "Session started successfully"));
         } catch (error: any) {
-            res.status(500).json({ success: false, message: error.message });
+            res.status(500).json(new ApiResponse(500, null, error.message));
         }
     },
 
@@ -40,12 +42,39 @@ export const sessionController = {
             const session = await CashRegisterSession.findOne({
                 cashier: req.user?._id,
                 status: 'Open'
-            });
-            if (!session) return res.status(404).json({ message: "No active session found." });
+            }).populate('cashier', 'name');
 
-            // Calculate expected balance (In a real app, this would sum up all PaymentTransactions in this shift)
-            // For now, using a placeholder logic
-            const expectedBalance = session.openingBalance + 5000; // Mocked expected income
+            if (!session) return res.status(404).json(new ApiResponse(404, null, "No active session found."));
+
+            // Get all orders created during this session
+            const orders = await Order.find({
+                storeId: req.tenantId,
+                cashier: req.user?._id,
+                createdAt: { $gte: session.openingTime },
+                status: 'Completed'
+            });
+
+            const summary = {
+                totalSales: 0,
+                totalOrders: orders.length,
+                cashSales: 0,
+                cardSales: 0,
+                upiSales: 0,
+                walletSales: 0,
+                refunds: 0
+            };
+
+            orders.forEach(order => {
+                summary.totalSales += order.grandTotal;
+                order.paymentDetails.forEach(p => {
+                    if (p.method === 'Cash') summary.cashSales += p.amount;
+                    if (p.method === 'Card') summary.cardSales += p.amount;
+                    if (p.method === 'UPI') summary.upiSales += p.amount;
+                    if (p.method === 'Wallet') summary.walletSales += p.amount;
+                });
+            });
+
+            const expectedBalance = session.openingBalance + summary.cashSales;
 
             session.closingBalance = closingBalance;
             session.expectedBalance = expectedBalance;
@@ -53,11 +82,20 @@ export const sessionController = {
             session.closingTime = new Date();
             session.status = 'Closed';
             session.notes = notes;
+            session.shiftSummary = summary;
 
             await session.save();
-            res.json({ success: true, data: session });
+            res.status(200).json(new ApiResponse(200, session, "Session closed successfully"));
         } catch (error: any) {
-            res.status(500).json({ success: false, message: error.message });
+            res.status(500).json(new ApiResponse(500, null, error.message));
         }
+    },
+
+    getActiveSession: async (req: TenantRequest, res: Response) => {
+        const session = await CashRegisterSession.findOne({
+            cashier: req.user?._id,
+            status: 'Open'
+        });
+        res.status(200).json(new ApiResponse(200, session));
     }
 };

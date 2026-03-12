@@ -3,6 +3,8 @@ import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 import Inventory from '../models/Inventory.js';
 import Customer from '../models/Customer.js';
+import AuditLog from '../models/AuditLog.js';
+import StockAdjustment from '../models/StockAdjustment.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
@@ -192,6 +194,66 @@ export const getLowStockReport = asyncHandler(async (req: TenantRequest, res: Re
     res.status(200).json(new ApiResponse(200, lowStock));
 });
 
+// @desc    Get tax compliance report
+// @route   GET /api/reports/tax-compliance
+export const getTaxComplianceReport = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { startDate, endDate } = req.query;
+    const query: any = { storeId: req.tenantId, status: 'Completed' };
+
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
+    }
+
+    const orders = await Order.find(query);
+
+    const complianceSummary = orders.reduce((acc, order) => {
+        acc.totalTaxCollected += order.taxTotal;
+        acc.grossSales += order.grandTotal;
+        acc.netSales += (order.grandTotal - order.taxTotal);
+        // Assuming order has tax breakdown, optionally we can expand this
+        return acc;
+    }, { totalTaxCollected: 0, grossSales: 0, netSales: 0, orderCount: orders.length });
+
+    res.status(200).json(new ApiResponse(200, complianceSummary));
+});
+
+// @desc    Get sales audit trail
+// @route   GET /api/reports/audit/sales
+export const getSalesAuditTrail = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { startDate, endDate } = req.query;
+    const query: any = { storeId: req.tenantId, entity: 'Order' };
+
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
+    }
+
+    const auditLogs = await AuditLog.find(query)
+        .populate('userId', 'name email')
+        .sort({ createdAt: -1 })
+        .limit(100);
+
+    res.status(200).json(new ApiResponse(200, auditLogs));
+});
+
+// @desc    Get inventory audit report
+// @route   GET /api/reports/audit/inventory
+export const getInventoryAuditReport = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { startDate, endDate } = req.query;
+    const query: any = { storeId: req.tenantId };
+
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate as string), $lte: new Date(endDate as string) };
+    }
+
+    const adjustments = await StockAdjustment.find(query)
+        .populate('productId', 'name sku')
+        .populate('createdBy', 'name')
+        .sort({ createdAt: -1 })
+        .limit(100);
+
+    res.status(200).json(new ApiResponse(200, adjustments));
+});
+
 // @desc    Queue background report generation
 // @route   POST /api/reports/queue
 export const queueReport = asyncHandler(async (req: TenantRequest, res: Response) => {
@@ -247,6 +309,30 @@ export const exportReport = asyncHandler(async (req: TenantRequest, res: Respons
             doc.fontSize(12).text(`Total Revenue: ${revenue.toFixed(2)}`);
             doc.text(`Total Cost: ${cost.toFixed(2)}`);
             doc.text(`Gross Profit: ${(revenue - cost).toFixed(2)}`);
+        } else if (type === 'tax-compliance') {
+            const orders = await Order.find(query);
+            let tax = 0, gross = 0;
+            orders.forEach(o => { tax += o.taxTotal; gross += o.grandTotal; });
+            doc.fontSize(12).text(`Gross Sales: ${gross.toFixed(2)}`);
+            doc.text(`Net Sales: ${(gross - tax).toFixed(2)}`);
+            doc.text(`Total Tax Collected: ${tax.toFixed(2)}`);
+        } else if (type === 'sales-audit') {
+            const logs = await AuditLog.find({ storeId: req.tenantId, entity: 'Order' })
+                .populate('userId', 'name')
+                .limit(100);
+            logs.forEach((log: any) => {
+                doc.fontSize(10).text(`Action: ${log.action} | User: ${log.userId?.name || 'System'} | Date: ${new Date(log.createdAt).toLocaleDateString()}`);
+                doc.moveDown(0.5);
+            });
+        } else if (type === 'inventory-audit') {
+            const adjs = await StockAdjustment.find({ storeId: req.tenantId })
+                .populate('productId', 'name sku')
+                .populate('createdBy', 'name')
+                .limit(100);
+            adjs.forEach((adj: any) => {
+                doc.fontSize(10).text(`Product: ${adj.productId?.name} | Adjustment: ${adj.adjustmentAmount} | Reason: ${adj.reason} | User: ${adj.createdBy?.name}`);
+                doc.moveDown(0.5);
+            });
         }
 
         doc.end();
@@ -289,6 +375,56 @@ export const exportReport = asyncHandler(async (req: TenantRequest, res: Respons
                 price: item.product?.price
             });
         });
+    } else if (type === 'tax-compliance') {
+        const orders = await Order.find(query);
+        worksheet.columns = [
+            { header: 'Order Number', key: 'orderNumber', width: 20 },
+            { header: 'Gross Sales', key: 'grandTotal', width: 15 },
+            { header: 'Tax Collected', key: 'taxTotal', width: 15 },
+            { header: 'Net Sales', key: 'netSales', width: 15 },
+            { header: 'Date', key: 'createdAt', width: 25 }
+        ];
+        orders.forEach(order => worksheet.addRow({
+            orderNumber: order.orderNumber,
+            grandTotal: order.grandTotal,
+            taxTotal: order.taxTotal,
+            netSales: order.grandTotal - order.taxTotal,
+            createdAt: order.createdAt.toISOString()
+        }));
+    } else if (type === 'sales-audit') {
+        const logs = await AuditLog.find({ storeId: req.tenantId, entity: 'Order' }).populate('userId', 'name');
+        worksheet.columns = [
+            { header: 'Action', key: 'action', width: 20 },
+            { header: 'Entity ID', key: 'entityId', width: 25 },
+            { header: 'User', key: 'user', width: 20 },
+            { header: 'Date', key: 'createdAt', width: 25 }
+        ];
+        logs.forEach((log: any) => worksheet.addRow({
+            action: log.action,
+            entityId: log.entityId?.toString(),
+            user: log.userId?.name || 'System',
+            createdAt: log.createdAt.toISOString()
+        }));
+    } else if (type === 'inventory-audit') {
+        const adjs = await StockAdjustment.find({ storeId: req.tenantId })
+            .populate('productId', 'name sku')
+            .populate('createdBy', 'name');
+        worksheet.columns = [
+            { header: 'Product Name', key: 'productName', width: 30 },
+            { header: 'SKU', key: 'sku', width: 15 },
+            { header: 'Adjustment', key: 'adjustmentAmount', width: 15 },
+            { header: 'Reason', key: 'reason', width: 20 },
+            { header: 'User', key: 'user', width: 20 },
+            { header: 'Date', key: 'createdAt', width: 25 }
+        ];
+        adjs.forEach((adj: any) => worksheet.addRow({
+            productName: adj.productId?.name,
+            sku: adj.productId?.sku,
+            adjustmentAmount: adj.adjustmentAmount,
+            reason: adj.reason,
+            user: adj.createdBy?.name,
+            createdAt: adj.createdAt.toISOString()
+        }));
     }
 
     if (format === 'csv') {

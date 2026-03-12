@@ -1,0 +1,11 @@
+import express from 'express';
+import { protect, authorize } from '../middleware/auth.js';
+import { tenantHandler } from '../middleware/tenantHandler.js';
+import { startShift, getActiveShift, closeShift, getAllShifts } from '../controllers/shiftController.js';
+const router = express.Router();
+router.use(protect, tenantHandler);
+router.post('/start', startShift);
+router.get('/active', getActiveShift);
+router.post('/close', closeShift);
+router.get('/', authorize('SUPER_ADMIN', 'STORE_OWNER', 'MANAGER'), getAllShifts);
+export default router;

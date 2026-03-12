@@ -6,6 +6,7 @@ import User from '../models/User.js';
 import AuditLog from '../models/AuditLog.js';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
+import { notificationService } from '../services/notificationService.js';
 
 // @desc    Get system-wide stats for Super Admin
 // @route   GET /api/v1/super-admin/stats
@@ -35,7 +36,7 @@ export const getSystemStats = asyncHandler(async (req: TenantRequest, res: Respo
 // @route   GET /api/v1/super-admin/stores
 export const getAllStores = asyncHandler(async (req: TenantRequest, res: Response) => {
     const { page = 1, limit = 10, search = '' } = req.query;
-    const query = search ? { name: { $regex: search, $options: 'i' } } : {};
+    const query = search ? { name: { $regex: search as string, $options: 'i' } } : {};
 
     const stores = await Store.find(query)
         .populate('owner', 'name email phone')
@@ -100,12 +101,11 @@ export const broadcastNotification = asyncHandler(async (req: TenantRequest, res
     // Use notificationService to send to each
     const notificationPromises = owners.map(owner =>
         notificationService.send({
-            recipientId: owner._id as string,
+            recipientId: owner._id as any,
             storeId: owner.storeId as any, // Most owners have a primary storeId
             title: `[SYSTEM] ${title}`,
             message,
-            type,
-            level: 'HIGH'
+            type
         })
     );
 

@@ -12,19 +12,27 @@ import { sendSMS } from '../utils/smsService.js';
 import PaymentTransaction from '../models/PaymentTransaction.js';
 import { notificationService } from '../services/notificationService.js';
 import Store from '../models/Store.js';
-import Loyalty from '../models/Loyalty.js';
-
-// ... (wait, targeting specific chunk)
-
 import Wallet from '../models/Wallet.js';
+import webhookService from '../services/webhookService.js';
+import Coupon from '../models/Coupon.js';
+import Loyalty from '../models/Loyalty.js';
+import redisClient from '../config/redis.js';
 
 // @desc    Create a new POS order
 // @route   POST /api/orders
 // @access  Private (Cashier/Manager/Owner)
 export const createOrder = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { customerId, items, subTotal, taxTotal, discountTotal, grandTotal, paymentDetails, loyaltyPointsUsed } = req.body;
+    const { customerId, items, subTotal, taxTotal, discountTotal, grandTotal, paymentDetails, loyaltyPointsUsed, couponCode } = req.body;
 
     const orderNumber = `ORD-${Date.now()}`;
+
+    // 0. Increment Coupon usage if applicable
+    if (couponCode) {
+        await Coupon.findOneAndUpdate(
+            { code: couponCode.toUpperCase(), storeId: req.tenantId },
+            { $inc: { usageCount: 1 } }
+        );
+    }
 
     // 1. Process Wallet usage if any
     const walletPayment = paymentDetails.find((p: any) => p.method === 'Wallet');
@@ -156,6 +164,9 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
         });
     }
 
+    // 4. Trigger Webhooks
+    webhookService.trigger('order.created', req.tenantId!.toString(), order);
+
     res.status(201).json(new ApiResponse(201, order, "Order created successfully"));
 });
 
@@ -163,12 +174,41 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
 // @route   GET /api/orders
 // @access  Private
 export const getOrders = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+
+    const cacheKey = `orders:${req.tenantId}:p${page}:l${limit}`;
+    if (process.env.SKIP_REDIS !== 'true') {
+        const cached = await redisClient.get(cacheKey);
+        if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), "Orders from cache"));
+    }
+
     const orders = await Order.find({ storeId: req.tenantId })
         .populate('customer')
         .populate('cashier', 'name')
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
 
-    res.status(200).json(new ApiResponse(200, orders));
+    const total = await Order.countDocuments({ storeId: req.tenantId });
+
+    const response = {
+        orders,
+        pagination: {
+            total,
+            page,
+            limit,
+            pages: Math.ceil(total / limit)
+        }
+    };
+
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.setEx(cacheKey, 300, JSON.stringify(response)); // 5 min cache
+    }
+
+    res.status(200).json(new ApiResponse(200, response));
 });
 
 // @desc    Get single order details

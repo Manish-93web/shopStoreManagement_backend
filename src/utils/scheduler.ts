@@ -20,13 +20,12 @@ export const initReportScheduler = () => {
                     await addReportJob({
                         tenantId: store._id.toString(),
                         type: 'sales',
-                        format: 'pdf',
                         filters: {
                             startDate: new Date(new Date().setDate(new Date().getDate() - 1)).toISOString(),
                             endDate: new Date().toISOString()
                         },
                         userId: owner._id.toString()
-                    });
+                    } as any);
                 }
             }
         } catch (error) {

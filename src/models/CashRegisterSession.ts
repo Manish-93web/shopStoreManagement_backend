@@ -17,6 +17,15 @@ export interface ICashRegisterSession extends Document {
     }[];
     status: 'Open' | 'Closed';
     notes?: string;
+    shiftSummary?: {
+        totalSales: number;
+        totalOrders: number;
+        cashSales: number;
+        cardSales: number;
+        upiSales: number;
+        walletSales: number;
+        refunds: number;
+    };
     createdAt: Date;
     updatedAt: Date;
 }
@@ -38,6 +47,15 @@ const CashRegisterSessionSchema: Schema = new Schema({
     }],
     status: { type: String, enum: ['Open', 'Closed'], default: 'Open' },
     notes: { type: String },
+    shiftSummary: {
+        totalSales: { type: Number, default: 0 },
+        totalOrders: { type: Number, default: 0 },
+        cashSales: { type: Number, default: 0 },
+        cardSales: { type: Number, default: 0 },
+        upiSales: { type: Number, default: 0 },
+        walletSales: { type: Number, default: 0 },
+        refunds: { type: Number, default: 0 }
+    }
 }, { timestamps: true });
 
 export default mongoose.model<ICashRegisterSession>('CashRegisterSession', CashRegisterSessionSchema);

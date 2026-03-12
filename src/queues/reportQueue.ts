@@ -12,7 +12,7 @@ if (process.env.SKIP_REDIS !== 'true') {
     reportQueue = new Queue('report-generation', { connection });
 }
 
-export const addReportJob = async (data: { tenantId: string, type: string, filters: any }) => {
+export const addReportJob = async (data: { tenantId: string, type: string, filters: any, format?: string, userId?: string }) => {
     if (process.env.SKIP_REDIS === 'true') {
         console.log('Skipping report job addition (SKIP_REDIS=true):', data.type);
         return;

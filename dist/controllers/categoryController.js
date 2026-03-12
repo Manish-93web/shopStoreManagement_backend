@@ -5,17 +5,42 @@ import ApiResponse from '../utils/apiResponse.js';
 // @route   GET /api/categories
 // @access  Private
 export const getCategories = asyncHandler(async (req, res) => {
-    const categories = await Category.find({ storeId: req.tenantId });
+    const { tree } = req.query;
+    const categories = await Category.find({ storeId: req.tenantId }).lean();
+    if (tree === 'true') {
+        const categoryMap = new Map();
+        const roots = [];
+        categories.forEach(cat => {
+            categoryMap.set(cat._id.toString(), { ...cat, children: [] });
+        });
+        categories.forEach(cat => {
+            const node = categoryMap.get(cat._id.toString());
+            if (cat.parentId) {
+                const parent = categoryMap.get(cat.parentId.toString());
+                if (parent) {
+                    parent.children.push(node);
+                }
+                else {
+                    roots.push(node);
+                }
+            }
+            else {
+                roots.push(node);
+            }
+        });
+        return res.status(200).json(new ApiResponse(200, roots));
+    }
     res.status(200).json(new ApiResponse(200, categories));
 });
 // @desc    Create a new category
 // @route   POST /api/categories
 // @access  Private (Owner/Manager)
 export const createCategory = asyncHandler(async (req, res) => {
-    const { name, description } = req.body;
+    const { name, description, parentId } = req.body;
     const category = await Category.create({
         name,
         description,
+        parentId: parentId || undefined,
         storeId: req.tenantId
     });
     res.status(201).json(new ApiResponse(201, category, "Category created successfully"));

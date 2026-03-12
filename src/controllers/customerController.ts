@@ -5,6 +5,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import ExcelJS from 'exceljs';
+import redisClient from '../config/redis.js';
 
 // @desc    Add loyalty points to customer
 // @route   POST /api/customers/:id/loyalty
@@ -33,8 +34,39 @@ export const updateLoyaltyPoints = asyncHandler(async (req: TenantRequest, res: 
 // @desc    Get all customers
 // @route   GET /api/customers
 export const getCustomers = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const customers = await Customer.find({ storeId: req.tenantId });
-    res.status(200).json(new ApiResponse(200, customers));
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+
+    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}`;
+    if (process.env.SKIP_REDIS !== 'true') {
+        const cached = await redisClient.get(cacheKey);
+        if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), "Customers from cache"));
+    }
+
+    const customers = await Customer.find({ storeId: req.tenantId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+    const total = await Customer.countDocuments({ storeId: req.tenantId });
+
+    const response = {
+        customers,
+        pagination: {
+            total,
+            page,
+            limit,
+            pages: Math.ceil(total / limit)
+        }
+    };
+
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.setEx(cacheKey, 300, JSON.stringify(response));
+    }
+
+    res.status(200).json(new ApiResponse(200, response));
 });
 
 // @desc    Create a new customer
@@ -203,7 +235,7 @@ export const importCustomers = asyncHandler(async (req: TenantRequest, res: Resp
     }
 
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(req.file.buffer);
+    await workbook.xlsx.load(req.file.buffer as any);
     const worksheet = workbook.worksheets[0];
 
     const customersToInsert: any[] = [];
