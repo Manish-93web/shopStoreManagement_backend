@@ -51,23 +51,33 @@ export const getProfitReport = asyncHandler(async (req: TenantRequest, res: Resp
 
     const orders = await Order.find(query).populate('items.product');
 
-    let totalRevenue = 0;
-    let totalCost = 0;
+    const dailyProfit: Record<string, { revenue: number; cost: number }> = {};
 
     orders.forEach(order => {
-        totalRevenue += order.grandTotal;
+        const dateKey = new Date(order.createdAt).toISOString().split('T')[0];
+        if (!dailyProfit[dateKey]) {
+            dailyProfit[dateKey] = { revenue: 0, cost: 0 };
+        }
+        
+        dailyProfit[dateKey].revenue += order.grandTotal;
+        
         order.items.forEach((item: any) => {
             const costPrice = item.product?.costPrice || 0;
-            totalCost += (costPrice * item.quantity);
+            dailyProfit[dateKey].cost += (costPrice * item.quantity);
         });
     });
 
-    res.status(200).json(new ApiResponse(200, {
-        totalRevenue,
-        totalCost,
-        grossProfit: totalRevenue - totalCost,
-        profitMargin: totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : 0
-    }));
+    const result = Object.entries(dailyProfit).map(([date, data]) => {
+        const netProfit = data.revenue - data.cost;
+        const margin = data.revenue > 0 ? (netProfit / data.revenue) * 100 : 0;
+        return {
+            date,
+            netProfit,
+            margin: Math.round(margin * 100) / 100
+        };
+    }).sort((a, b) => a.date.localeCompare(b.date));
+
+    res.status(200).json(new ApiResponse(200, result));
 });
 
 // @desc    Get tax report

@@ -49,8 +49,8 @@ const startServer = async () => {
         await connectDB();
         await connectRedis();
 
-        httpServer.listen(PORT, () => {
-            console.log(`Server is running on port ${PORT}`);
+        httpServer.listen(PORT as number, '0.0.0.0', () => {
+            console.log(`Server is running on port ${PORT} (0.0.0.0)`);
         });
     } catch (error) {
         console.error('Failed to start server:', error);
