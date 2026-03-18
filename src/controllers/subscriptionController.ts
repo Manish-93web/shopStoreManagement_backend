@@ -27,6 +27,20 @@ export const subscriptionController = {
         res.status(201).json(new ApiResponse(201, plan, "Plan created successfully"));
     }),
 
+    // @desc    Update an existing plan (Super Admin)
+    updatePlan: asyncHandler(async (req: TenantRequest, res: Response) => {
+        const plan = await Plan.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
+        if (!plan) return res.status(404).json(new ApiResponse(404, null, "Plan not found"));
+        res.status(200).json(new ApiResponse(200, plan, "Plan updated successfully"));
+    }),
+
+    // @desc    Delete a plan (Super Admin)
+    deletePlan: asyncHandler(async (req: TenantRequest, res: Response) => {
+        const plan = await Plan.findByIdAndDelete(req.params.id);
+        if (!plan) return res.status(404).json(new ApiResponse(404, null, "Plan not found"));
+        res.status(200).json(new ApiResponse(200, null, "Plan deleted successfully"));
+    }),
+
     // @desc    Upgrade/Change plan
     upgradePlan: asyncHandler(async (req: TenantRequest, res: Response) => {
         const { planId } = req.body;
@@ -42,7 +56,7 @@ export const subscriptionController = {
                     lastBillingDate: new Date()
                 }
             },
-            { new: true }
+            { returnDocument: 'after' }
         );
 
         res.status(200).json(new ApiResponse(200, store, "Subscription updated"));

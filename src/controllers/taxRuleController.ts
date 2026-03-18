@@ -24,7 +24,7 @@ export const updateTaxRule = asyncHandler(async (req: TenantRequest, res: Respon
     const rule = await TaxRule.findOneAndUpdate(
         { _id: req.params.id, storeId: req.tenantId },
         req.body,
-        { new: true }
+        { returnDocument: 'after' }
     );
     if (!rule) return res.status(404).json(new ApiResponse(404, null, 'Tax rule not found'));
     res.status(200).json(new ApiResponse(200, rule, 'Tax rule updated'));

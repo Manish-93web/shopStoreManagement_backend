@@ -49,7 +49,7 @@ export const updateApiKey = asyncHandler(async (req: TenantRequest, res: Respons
     const apiKey = await ApiKey.findOneAndUpdate(
         { _id: req.params.id, tenantId: req.tenantId },
         { name, isActive, permissions },
-        { new: true }
+        { returnDocument: 'after' }
     );
 
     if (!apiKey) return res.status(404).json(new ApiResponse(404, null, "API Key not found"));

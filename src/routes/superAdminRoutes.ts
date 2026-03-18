@@ -1,6 +1,6 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js';
-import { getSystemStats, getAllStores, toggleStoreStatus, getSystemAuditLogs, broadcastNotification } from '../controllers/superAdminController.js';
+import { getSystemStats, getAllStores, toggleStoreStatus, approveStore, getSystemAuditLogs, broadcastNotification } from '../controllers/superAdminController.js';
 import { getAllFeatureFlags, createFeatureFlag, updateFeatureFlag, deleteFeatureFlag } from '../controllers/featureFlagController.js';
 
 const router = express.Router();
@@ -11,6 +11,7 @@ router.use(authorize('SUPER_ADMIN'));
 router.get('/stats', getSystemStats);
 router.get('/stores', getAllStores);
 router.put('/stores/:id/status', toggleStoreStatus);
+router.put('/stores/:id/approve', approveStore);
 router.get('/audit-logs', getSystemAuditLogs);
 router.post('/broadcast', broadcastNotification);
 

@@ -19,24 +19,54 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
     const limit = parseInt(req.query.limit as string) || 50;
     const skip = (page - 1) * limit;
 
-    const cacheKey = `products:${req.tenantId}:p${page}:l${limit}`;
-    if (process.env.SKIP_REDIS !== 'true') {
-        const cachedProducts = await redisClient.get(cacheKey);
-        if (cachedProducts) {
-            return res.status(200).json(new ApiResponse(200, JSON.parse(cachedProducts), "Products fetched from cache"));
-        }
+    const { search, category, brand, stockStatus } = req.query;
+
+    const query: any = { storeId: req.tenantId };
+    
+    if (category && category !== 'All') query.category = category;
+    if (brand && brand !== 'All') query.brand = brand;
+    if (search) {
+        query.$or = [
+            { name: { $regex: search, $options: 'i' } },
+            { sku: { $regex: search, $options: 'i' } },
+            { barcode: { $regex: search, $options: 'i' } }
+        ];
     }
 
-    const products = await Product.find({ storeId: req.tenantId })
+    // Handle stock status filtering (requires looking at Inventory)
+    if (stockStatus) {
+        const invQuery: any = { store: req.tenantId };
+        if (stockStatus === 'low') {
+            invQuery.$expr = { $lte: ['$quantity', '$lowStockThreshold'] };
+        } else if (stockStatus === 'out') {
+            invQuery.quantity = 0;
+        }
+        
+        const matchingInventories = await Inventory.find(invQuery).select('product');
+        const productIds = matchingInventories.map(inv => inv.product);
+        query._id = { $in: productIds };
+    }
+
+    const products = await Product.find(query)
         .populate('category')
         .skip(skip)
         .limit(limit)
+        .sort({ createdAt: -1 })
         .lean();
 
-    const total = await Product.countDocuments({ storeId: req.tenantId });
+    const productIds = products.map(p => p._id);
+    const inventories = await Inventory.find({ product: { $in: productIds }, store: req.tenantId });
+    const inventoryMap = new Map(inventories.map(inv => [inv.product.toString(), inv]));
+
+    const productsWithInventory = products.map(p => ({
+        ...p,
+        inventory: inventoryMap.get(p._id.toString())
+    }));
+
+    const total = await Product.countDocuments(query);
 
     const response = {
-        products,
+        products: productsWithInventory,
         pagination: {
             total,
             page,
@@ -45,15 +75,22 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
         }
     };
 
-    if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.setEx(cacheKey, 3600, JSON.stringify(response));
-    }
     res.status(200).json(new ApiResponse(200, response));
 });
 
 // @desc    Create a new product
 // @route   POST /api/products
 export const createProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
+    // Check Plan Limits
+    const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
+    if (store && store.subscriptionPlan) {
+        const plan = store.subscriptionPlan as any;
+        const currentCount = await Product.countDocuments({ storeId: req.tenantId });
+        if (plan.maxProducts !== 0 && currentCount >= plan.maxProducts) {
+            return res.status(403).json(new ApiResponse(403, null, `Product limit reached. Your current plan "${plan.name}" allows up to ${plan.maxProducts} products.`));
+        }
+    }
+
     const productData = { ...req.body, storeId: req.tenantId };
     if (!productData.barcode) {
         const generateBarcode = customAlphabet('0123456789', 12);
@@ -157,7 +194,7 @@ export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response
     const inv = await Inventory.findOneAndUpdate(
         { product: req.params.id, store: req.tenantId },
         { $inc: { quantity } },
-        { new: true, upsert: true }
+        { returnDocument: 'after', upsert: true }
     );
 
     // Write audit trail to StockAdjustment
@@ -195,15 +232,29 @@ export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response
 // @desc    Bulk import products
 // @route   POST /api/products/bulk
 export const bulkImportProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
+    // Check Plan Limits
+    const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
+    let maxProducts = 0;
+    let currentCount = 0;
+    if (store && store.subscriptionPlan) {
+        const plan = store.subscriptionPlan as any;
+        maxProducts = plan.maxProducts;
+        currentCount = await Product.countDocuments({ storeId: req.tenantId });
+    }
+
     const productsData = req.body;
     if (!Array.isArray(productsData)) return res.status(400).json(new ApiResponse(400, null, "Invalid data format"));
     const results = { success: 0, failed: 0, errors: [] as any[] };
     const generateBarcode = customAlphabet('0123456789', 12);
     for (const data of productsData) {
         try {
+            if (maxProducts !== 0 && currentCount >= maxProducts) {
+                throw new Error(`Plan limit of ${maxProducts} products reached.`);
+            }
             const product = await Product.create({ ...data, storeId: req.tenantId, barcode: data.barcode || generateBarcode() });
             await Inventory.create({ product: product._id, store: req.tenantId, quantity: data.initialStock || 0 });
             results.success++;
+            currentCount++;
         } catch (error: any) {
             results.failed++;
             results.errors.push({ name: data.name, error: error.message });

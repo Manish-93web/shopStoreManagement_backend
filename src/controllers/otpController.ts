@@ -24,7 +24,7 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response) => {
     await OTP.findOneAndUpdate(
         { phone },
         { code, expiresAt },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
     );
 
     // MOCK: Send SMS (In production, use Twilio/Firebase here)

@@ -7,10 +7,14 @@ import { notificationService } from '../services/notificationService.js';
 export const notificationController = {
     getNotifications: async (req: TenantRequest, res: Response) => {
         try {
-            const notifications = await Notification.find({
-                recipient: req.user?._id,
-                storeId: req.tenantId
-            }).sort({ createdAt: -1 }).limit(50);
+            const query: any = { recipient: req.user?._id };
+            if (req.tenantId && req.tenantId !== 'undefined' && req.tenantId !== 'null') {
+                query.storeId = req.tenantId;
+            }
+            
+            const notifications = await Notification.find(query)
+                .sort({ createdAt: -1 })
+                .limit(50);
             res.json({ success: true, data: notifications });
         } catch (error: any) {
             res.status(500).json({ success: false, message: error.message });

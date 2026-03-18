@@ -20,7 +20,7 @@ export const updateSettings = asyncHandler(async (req: TenantRequest, res: Respo
     const settings = await Settings.findOneAndUpdate(
         { storeId: req.tenantId },
         req.body,
-        { new: true, upsert: true }
+        { returnDocument: 'after', upsert: true }
     );
     res.status(200).json(new ApiResponse(200, settings, 'Settings updated'));
 });

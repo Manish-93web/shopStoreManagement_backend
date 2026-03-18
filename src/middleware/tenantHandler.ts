@@ -15,9 +15,13 @@ export const tenantHandler = (req: TenantRequest, res: Response, next: NextFunct
         tenantId = req.user?.storeId;
     }
 
-    // 3. Fallback to first store for STORE_OWNER if still missing
     if (!tenantId && req.user?.role === 'STORE_OWNER' && req.user?.stores?.length > 0) {
         tenantId = req.user.stores[0];
+    }
+
+    // Sanitize: Handle literal "undefined" or "null" strings from frontend
+    if (tenantId === 'undefined' || tenantId === 'null') {
+        tenantId = undefined;
     }
 
     if (!tenantId && req.user?.role !== 'SUPER_ADMIN') {

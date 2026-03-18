@@ -105,7 +105,7 @@ export const updateWebhook = asyncHandler(async (req: TenantRequest, res: Respon
     const webhook = await Webhook.findOneAndUpdate(
         { _id: req.params.id, tenantId: req.tenantId },
         req.body,
-        { new: true }
+        { returnDocument: 'after' }
     );
 
     if (!webhook) {

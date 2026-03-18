@@ -154,7 +154,7 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
         const inv = await Inventory.findOneAndUpdate(
             { product: item.product, store: req.tenantId },
             { $inc: { quantity: -item.quantity } },
-            { new: true }
+            { returnDocument: 'after' }
         );
 
         // Notify clients about stock change

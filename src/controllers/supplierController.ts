@@ -24,7 +24,7 @@ export const updateSupplier = asyncHandler(async (req: TenantRequest, res: Respo
     const supplier = await Supplier.findOneAndUpdate(
         { _id: req.params.id, storeId: req.tenantId },
         req.body,
-        { new: true }
+        { returnDocument: 'after' }
     );
     if (!supplier) {
         return res.status(404).json(new ApiResponse(404, null, 'Supplier not found'));

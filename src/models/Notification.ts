@@ -26,7 +26,7 @@ const NotificationSchema: Schema = new Schema({
         enum: ['In-App', 'Email', 'SMS', 'WhatsApp'],
         default: ['In-App']
     }],
-    storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
+    storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: false },
     metadata: { type: Schema.Types.Mixed },
 }, { timestamps: true });
 

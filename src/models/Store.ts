@@ -16,6 +16,7 @@ export interface IStore extends Document {
     isActive: boolean;
     subscriptionPlan: mongoose.Types.ObjectId;
     subscriptionStatus: 'Active' | 'Past Due' | 'Cancelled' | 'Trialing';
+    status: 'Pending' | 'Approved' | 'Suspended';
     trialEndsAt?: Date;
     featuresEnabled: string[];
     currentMonthOrders: number;
@@ -31,6 +32,11 @@ const StoreSchema: Schema = new Schema({
     currency: {
         code: { type: String, default: 'INR' },
         symbol: { type: String, default: '₹' }
+    },
+    status: { 
+        type: String, 
+        enum: ['Pending', 'Approved', 'Suspended'], 
+        default: 'Pending' 
     },
     timezone: { type: String, default: 'Asia/Kolkata' },
     shopType: {

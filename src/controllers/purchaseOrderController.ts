@@ -52,7 +52,7 @@ export const receivePurchaseOrder = asyncHandler(async (req: TenantRequest, res:
         await Inventory.findOneAndUpdate(
             { product: item.product, store: req.tenantId },
             { $inc: { quantity: item.quantity } },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: 'after' }
         );
     }
 

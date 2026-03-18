@@ -31,7 +31,7 @@ export const saveTheme = asyncHandler(async (req: TenantRequest, res: Response) 
     const theme = await ThemeConfig.findOneAndUpdate(
         { storeId: req.tenantId },
         { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius, storeId: req.tenantId },
-        { upsert: true, new: true, runValidators: true }
+        { upsert: true, returnDocument: 'after', runValidators: true }
     );
 
     res.status(200).json(new ApiResponse(200, theme, 'Theme saved successfully'));

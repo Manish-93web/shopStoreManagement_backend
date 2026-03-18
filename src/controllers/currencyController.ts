@@ -19,7 +19,7 @@ export const currencyController = {
         const currency = await Currency.findOneAndUpdate(
             { _id: req.params.id, storeId: req.tenantId },
             req.body,
-            { new: true }
+            { returnDocument: 'after' }
         );
         res.status(200).json(new ApiResponse(200, currency));
     })

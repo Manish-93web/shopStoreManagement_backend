@@ -61,7 +61,7 @@ export const updateCategory = asyncHandler(async (req: TenantRequest, res: Respo
     const category = await Category.findOneAndUpdate(
         { _id: req.params.id, storeId: req.tenantId },
         req.body,
-        { new: true }
+        { returnDocument: 'after' }
     );
 
     if (!category) {

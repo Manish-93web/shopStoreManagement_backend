@@ -107,7 +107,7 @@ export const updateCustomer = asyncHandler(async (req: TenantRequest, res: Respo
     const customer = await Customer.findOneAndUpdate(
         { _id: req.params.id, storeId: req.tenantId },
         { $set: req.body },
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
     );
 
     if (!customer) {

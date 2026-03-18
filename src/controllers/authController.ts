@@ -180,7 +180,7 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
     await OTP.findOneAndUpdate(
         { phone: `email:${email}` },
         { code, expiresAt },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
     );
 
     console.log(`[AUTH] Password Reset OTP for ${email}: ${code}`);

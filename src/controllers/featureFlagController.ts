@@ -9,6 +9,21 @@ import { TenantRequest } from '../middleware/tenantHandler.js';
 // @route   GET /api/feature-flags/evaluate
 // @access  Private (Tenant)
 export const evaluateFeatureFlags = asyncHandler(async (req: TenantRequest, res: Response) => {
+    // 1. Handle Super Admin (Access to all active flags)
+    if (req.user?.role === 'SUPER_ADMIN') {
+        const allFlags = await FeatureFlag.find({});
+        const evaluatedFlags: Record<string, boolean> = {};
+        allFlags.forEach(flag => {
+            evaluatedFlags[flag.key] = flag.isActive;
+        });
+        return res.status(200).json(new ApiResponse(200, evaluatedFlags));
+    }
+
+    // 2. Tenant Context Required
+    if (!req.tenantId) {
+        return res.status(400).json(new ApiResponse(400, null, "Store ID context required"));
+    }
+
     const store = await Store.findById(req.tenantId);
     if (!store) {
         return res.status(404).json(new ApiResponse(404, null, "Store not found"));
@@ -74,7 +89,7 @@ export const createFeatureFlag = asyncHandler(async (req: TenantRequest, res: Re
 // @route   PUT /api/super-admin/feature-flags/:id
 // @access  SuperAdmin
 export const updateFeatureFlag = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const flag = await FeatureFlag.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const flag = await FeatureFlag.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
     if (!flag) return res.status(404).json(new ApiResponse(404, null, "Flag not found"));
     res.status(200).json(new ApiResponse(200, flag, "Feature flag updated"));
 });

@@ -30,7 +30,7 @@ export const updateBrand = asyncHandler(async (req: TenantRequest, res: Response
     const brand = await Brand.findOneAndUpdate(
         { _id: req.params.id, storeId: req.tenantId },
         req.body,
-        { new: true }
+        { returnDocument: 'after' }
     );
     if (!brand) return res.status(404).json(new ApiResponse(404, null, 'Brand not found'));
     res.status(200).json(new ApiResponse(200, brand, 'Brand updated'));
