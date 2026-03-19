@@ -4,6 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import Settings from '../models/Settings.js';
 import User from '../models/User.js';
+import Plan from '../models/Plan.js';
 
 // @desc    Get all stores (Super Admin only)
 // @route   GET /api/stores
@@ -43,6 +44,9 @@ export const createStore = asyncHandler(async (req: any, res: Response) => {
 
     const { name, shopType, address, phone, email, currency, timezone } = req.body;
 
+    // Auto-assign the Free plan to all new stores
+    const freePlan = await Plan.findOne({ name: 'Free', isActive: true });
+
     const store = await Store.create({
         name,
         shopType,
@@ -51,7 +55,8 @@ export const createStore = asyncHandler(async (req: any, res: Response) => {
         email,
         currency,
         timezone,
-        owner: req.user.id
+        owner: req.user.id,
+        subscriptionPlan: freePlan?._id
     });
 
     // Initialize settings for the new store

@@ -5,7 +5,10 @@ import {
     getDashboardSummary,
     getRetentionStats,
     getCategoryGrowth,
-    getRetentionTrends
+    getRetentionTrends,
+    getSalesPrediction,
+    getCategoryAnalytics,
+    getSupplierAnalytics
 } from '../controllers/analyticsController.js';
 
 import { checkFeatureAccess } from '../middleware/featureAccess.js';
@@ -14,7 +17,7 @@ const router = express.Router();
 
 router.use(protect, tenantHandler, checkFeatureAccess('Basic Analytics'));
 
-router.get('/prediction', getSalesPrediction);
+router.get('/prediction', checkFeatureAccess('AI Predictions'), getSalesPrediction);
 router.get('/categories', getCategoryAnalytics);
 router.get('/suppliers', getSupplierAnalytics);
 router.get('/summary', getDashboardSummary);
