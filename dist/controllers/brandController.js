@@ -22,7 +22,7 @@ export const createBrand = asyncHandler(async (req, res) => {
 // @desc    Update brand
 // @route   PUT /api/brands/:id
 export const updateBrand = asyncHandler(async (req, res) => {
-    const brand = await Brand.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { new: true });
+    const brand = await Brand.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { returnDocument: 'after' });
     if (!brand)
         return res.status(404).json(new ApiResponse(404, null, 'Brand not found'));
     res.status(200).json(new ApiResponse(200, brand, 'Brand updated'));

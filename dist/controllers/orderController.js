@@ -80,8 +80,8 @@ export const createOrder = asyncHandler(async (req, res) => {
             loyalty.points -= loyaltyPointsUsed;
             loyalty.totalRedeemed += loyaltyPointsUsed;
         }
-        // Add points based on Tier multipliers
-        // Silver: 1x, Gold: 1.5x, Platinum: 2x
+        // points based on 1% base rate (Example: 1000₹ = 10 points)
+        // plus Tier multipliers - Silver: 1x, Gold: 1.5x, Platinum: 2x
         let multiplier = 1;
         if (loyalty.tier === 'Gold')
             multiplier = 1.5;
@@ -130,10 +130,19 @@ export const createOrder = asyncHandler(async (req, res) => {
     }
     // Reduce inventory for each item
     for (const item of items) {
-        const inv = await Inventory.findOneAndUpdate({ product: item.product, store: req.tenantId }, { $inc: { quantity: -item.quantity } }, { new: true });
+        const invQuery = { store: req.tenantId };
+        if (item.variant) {
+            invQuery.variant = item.variant;
+        }
+        else {
+            invQuery.product = item.product;
+            invQuery.variant = { $exists: false }; // Base product stock if no variant
+        }
+        const inv = await Inventory.findOneAndUpdate(invQuery, { $inc: { quantity: -item.quantity } }, { returnDocument: 'after' });
         // Notify clients about stock change
         emitToStore(req.tenantId.toString(), 'inventory-update', {
             productId: item.product,
+            variantId: item.variant,
             newQuantity: inv?.quantity
         });
     }

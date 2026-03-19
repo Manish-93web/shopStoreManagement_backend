@@ -148,7 +148,7 @@ export const forgotPassword = asyncHandler(async (req, res) => {
     // Reuse OTP logic for email (MOCK)
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-    await OTP.findOneAndUpdate({ phone: `email:${email}` }, { code, expiresAt }, { upsert: true, new: true });
+    await OTP.findOneAndUpdate({ phone: `email:${email}` }, { code, expiresAt }, { upsert: true, returnDocument: 'after' });
     console.log(`[AUTH] Password Reset OTP for ${email}: ${code}`);
     res.status(200).json(new ApiResponse(200, null, "Password reset code sent to your email (Check console)"));
 });

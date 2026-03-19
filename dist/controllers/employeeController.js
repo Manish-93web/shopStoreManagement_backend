@@ -4,6 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import mongoose from 'mongoose';
 import Order from '../models/Order.js';
+import Store from '../models/Store.js';
 // @desc    Get all employees for a store
 // @route   GET /api/employees
 export const getEmployees = asyncHandler(async (req, res) => {
@@ -20,6 +21,15 @@ export const createEmployee = asyncHandler(async (req, res) => {
     const existingUser = await User.findOne({ email });
     if (existingUser) {
         return res.status(400).json(new ApiResponse(400, null, 'Email already in use'));
+    }
+    // Check Plan Limits
+    const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
+    if (store && store.subscriptionPlan) {
+        const plan = store.subscriptionPlan;
+        const currentCount = await User.countDocuments({ storeId: req.tenantId });
+        if (plan.maxUsers !== 0 && currentCount >= plan.maxUsers) {
+            return res.status(403).json(new ApiResponse(403, null, `User limit reached. Your current plan "${plan.name}" allows up to ${plan.maxUsers} users.`));
+        }
     }
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -58,7 +68,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
 // @route   PUT /api/employees/:id
 export const updateEmployee = asyncHandler(async (req, res) => {
     const { name, role, isActive } = req.body;
-    const employee = await User.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, { name, role, isActive }, { new: true }).select('-password -refreshToken');
+    const employee = await User.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, { name, role, isActive }, { returnDocument: 'after' }).select('-password -refreshToken');
     if (!employee) {
         return res.status(404).json(new ApiResponse(404, null, 'Employee not found'));
     }

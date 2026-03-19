@@ -10,6 +10,8 @@ export interface IPromotionRule extends Document {
     discountValue: number;
     priority: number; // For multiple applicable rules
     isActive: boolean;
+    validFrom?: Date;
+    validTo?: Date;
     storeId: mongoose.Types.ObjectId;
     createdAt: Date;
     updatedAt: Date;
@@ -29,6 +31,8 @@ const PromotionRuleSchema: Schema = new Schema({
     discountValue: { type: Number, required: true },
     priority: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
+    validFrom: { type: Date },
+    validTo: { type: Date },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true }
 }, { timestamps: true });
 

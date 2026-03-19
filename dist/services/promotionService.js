@@ -53,7 +53,16 @@ export const promotionService = {
      * Get Best Automatic Promotion
      */
     evaluateAutomaticPromotions: async (cartTotal, cartItems, storeId) => {
-        const rules = await PromotionRule.find({ storeId, isActive: true }).sort({ priority: -1 });
+        const now = new Date();
+        const rules = await PromotionRule.find({
+            storeId,
+            isActive: true,
+            $or: [
+                { validFrom: { $lte: now }, validTo: { $gte: now } },
+                { validFrom: { $exists: false }, validTo: { $exists: false } },
+                { validFrom: null, validTo: null }
+            ]
+        }).sort({ priority: -1 });
         // Simple implementation: choose first applicable rule by priority
         for (const rule of rules) {
             if (rule.triggerType === 'TotalCartValue' && cartTotal >= rule.threshold) {
@@ -70,7 +79,28 @@ export const promotionService = {
                     discountAmount
                 };
             }
-            // Add custom logic for ProductSpecific/CategorySpecific triggers here
+            if (rule.triggerType === 'CategorySpecific' || rule.triggerType === 'ProductSpecific') {
+                const targetItems = cartItems.filter(item => rule.triggerType === 'CategorySpecific'
+                    ? item.category === rule.targetId?.toString()
+                    : item.product === rule.targetId?.toString());
+                if (targetItems.length > 0) {
+                    const targetTotal = targetItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+                    if (targetTotal >= rule.threshold) {
+                        let discountAmount = 0;
+                        if (rule.discountType === 'Percentage') {
+                            discountAmount = (targetTotal * rule.discountValue) / 100;
+                        }
+                        else {
+                            discountAmount = rule.discountValue;
+                        }
+                        return {
+                            ruleId: rule._id,
+                            name: rule.name,
+                            discountAmount
+                        };
+                    }
+                }
+            }
         }
         return null;
     }

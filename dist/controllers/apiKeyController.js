@@ -36,7 +36,7 @@ export const createApiKey = asyncHandler(async (req, res) => {
 export const updateApiKey = asyncHandler(async (req, res) => {
     // Only allow updating name and active status
     const { name, isActive, permissions } = req.body;
-    const apiKey = await ApiKey.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { name, isActive, permissions }, { new: true });
+    const apiKey = await ApiKey.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { name, isActive, permissions }, { returnDocument: 'after' });
     if (!apiKey)
         return res.status(404).json(new ApiResponse(404, null, "API Key not found"));
     res.status(200).json(new ApiResponse(200, apiKey, "API Key updated successfully"));

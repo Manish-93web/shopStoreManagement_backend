@@ -3,6 +3,8 @@ import ReturnOrder from '../models/ReturnOrder.js';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
 import PaymentTransaction from '../models/PaymentTransaction.js';
+import Wallet from '../models/Wallet.js';
+import Customer from '../models/Customer.js';
 import mongoose from 'mongoose';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 
@@ -63,6 +65,29 @@ export const returnController = {
                     performedBy: req.user?._id
                 });
                 await refund.save({ session });
+
+                // Update Wallet if applicable
+                if (refundMethod === 'Wallet' && originalOrder.customer) {
+                    await Wallet.findOneAndUpdate(
+                        { customer: originalOrder.customer, storeId },
+                        { 
+                            $inc: { balance: refundAmount },
+                            $push: { 
+                                transactions: { 
+                                    type: 'CREDIT', 
+                                    amount: refundAmount, 
+                                    reason: `Refund for ${originalOrder.orderNumber}`,
+                                    date: new Date()
+                                } 
+                            }
+                        },
+                        { session, upsert: true }
+                    );
+                    
+                    // Update legacy loyalty field if needed (often used for simple balance display)
+                    await Customer.findByIdAndUpdate(originalOrder.customer, { $inc: { walletBalance: refundAmount } }, { session });
+                }
+
                 returnOrder.refundStatus = 'Processed';
                 await returnOrder.save({ session });
             }

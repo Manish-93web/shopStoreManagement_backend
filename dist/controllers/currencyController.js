@@ -11,7 +11,7 @@ export const currencyController = {
         res.status(201).json(new ApiResponse(201, currency));
     }),
     updateCurrency: asyncHandler(async (req, res) => {
-        const currency = await Currency.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { new: true });
+        const currency = await Currency.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { returnDocument: 'after' });
         res.status(200).json(new ApiResponse(200, currency));
     })
 };

@@ -1,9 +1,13 @@
 import { Response } from 'express';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import Inventory from '../models/Inventory.js';
+import Product from '../models/Product.js';
+import ProductVariant from '../models/ProductVariant.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
+import { notificationService } from '../services/notificationService.js';
+import Store from '../models/Store.js';
 
 // @desc    Create a new Purchase Order
 // @route   POST /api/purchase-orders
@@ -35,6 +39,16 @@ export const approvePurchaseOrder = asyncHandler(async (req: TenantRequest, res:
     po.status = 'Approved';
     await po.save();
 
+    // Notify PO Creator
+    const store = await Store.findById(req.tenantId);
+    await notificationService.send({
+        recipientId: po.createdBy.toString(),
+        storeId: req.tenantId!.toString(),
+        title: "Purchase Order Approved",
+        message: `Your Purchase Order ${po.poNumber} has been approved.`,
+        type: 'SUCCESS'
+    });
+
     res.status(200).json(new ApiResponse(200, po, "Purchase Order approved"));
 });
 
@@ -49,16 +63,36 @@ export const receivePurchaseOrder = asyncHandler(async (req: TenantRequest, res:
 
     // Update inventory for each item
     for (const item of po.items) {
+        // Increment inventory
         await Inventory.findOneAndUpdate(
             { product: item.product, store: req.tenantId },
             { $inc: { quantity: item.quantity } },
-            { upsert: true, returnDocument: 'after' }
+            { upsert: true }
         );
+
+        // Standardize cost price update
+        if (item.variant) {
+            await ProductVariant.findByIdAndUpdate(item.variant, { $set: { costPrice: item.costPrice } });
+        } else {
+            await Product.findByIdAndUpdate(item.product, { $set: { costPrice: item.costPrice } });
+        }
     }
 
     po.status = 'Received';
     po.receivedAt = new Date();
     await po.save();
+
+    // Notify Owner
+    const store = await Store.findById(req.tenantId);
+    if (store) {
+        await notificationService.send({
+            recipientId: store.owner.toString(),
+            storeId: req.tenantId!.toString(),
+            title: "Inventory Restocked (PO Received)",
+            message: `PO ${po.poNumber} has been received. Stocks updated.`,
+            type: 'SUCCESS'
+        });
+    }
 
     res.status(200).json(new ApiResponse(200, po, "Inventory received successfully"));
 });

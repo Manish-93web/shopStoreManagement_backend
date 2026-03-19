@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import User from '../models/User.js';
+import User, { UserRole } from '../models/User.js';
+
 
 dotenv.config();
 
@@ -14,7 +15,8 @@ async function createSuperAdmin() {
 
         if (existingAdmin) {
             console.log('Super Admin already exists:', adminEmail);
-            existingAdmin.role = 'SUPER_ADMIN';
+            existingAdmin.role = UserRole.SUPER_ADMIN;
+
             await existingAdmin.save();
             console.log('Ensured role is SUPER_ADMIN');
         } else {
@@ -22,7 +24,8 @@ async function createSuperAdmin() {
                 name: 'System Administrator',
                 email: adminEmail,
                 password: 'admin123',
-                role: 'SUPER_ADMIN',
+                role: UserRole.SUPER_ADMIN,
+
                 isActive: true
             });
             console.log('Super Admin created successfully:', adminEmail);

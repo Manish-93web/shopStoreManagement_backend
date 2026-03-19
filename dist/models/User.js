@@ -37,6 +37,5 @@ UserSchema.pre('save', async function () {
 UserSchema.methods.comparePassword = async function (password) {
     return await bcrypt.compare(password, this.password);
 };
-UserSchema.index({ email: 1 });
 UserSchema.index({ storeId: 1 });
 export default mongoose.model('User', UserSchema);

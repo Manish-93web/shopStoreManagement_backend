@@ -2,6 +2,7 @@ import Store from '../models/Store.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import Settings from '../models/Settings.js';
+import User from '../models/User.js';
 // @desc    Get all stores (Super Admin only)
 // @route   GET /api/stores
 export const getStores = asyncHandler(async (req, res) => {
@@ -17,6 +18,22 @@ export const getMyStores = asyncHandler(async (req, res) => {
 // @desc    Create a new store (Owner)
 // @route   POST /api/stores
 export const createStore = asyncHandler(async (req, res) => {
+    // Check Plan Limits
+    const user = await User.findById(req.user.id).populate({
+        path: 'stores',
+        populate: { path: 'subscriptionPlan' }
+    });
+    if (user) {
+        let maxStores = 1; // Default for trial
+        user.stores.forEach((s) => {
+            if (s.subscriptionPlan && (s.subscriptionPlan.maxStores === 0 || s.subscriptionPlan.maxStores > maxStores)) {
+                maxStores = s.subscriptionPlan.maxStores;
+            }
+        });
+        if (maxStores !== 0 && user.stores.length >= maxStores) {
+            return res.status(403).json(new ApiResponse(403, null, `Store limit reached. Your current plan allows up to ${maxStores} stores.`));
+        }
+    }
     const { name, shopType, address, phone, email, currency, timezone } = req.body;
     const store = await Store.create({
         name,
@@ -48,7 +65,7 @@ export const updateStore = asyncHandler(async (req, res) => {
         return res.status(403).json(new ApiResponse(403, null, "Not authorized to update this store"));
     }
     store = await Store.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,
+        returnDocument: 'after',
         runValidators: true
     });
     res.status(200).json(new ApiResponse(200, store, "Store updated successfully"));

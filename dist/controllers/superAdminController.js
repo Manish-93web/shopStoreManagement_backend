@@ -8,21 +8,29 @@ import { notificationService } from '../services/notificationService.js';
 // @desc    Get system-wide stats for Super Admin
 // @route   GET /api/v1/super-admin/stats
 export const getSystemStats = asyncHandler(async (req, res) => {
-    const [totalStores, totalOrders, totalUsers, stores] = await Promise.all([
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    const [totalStores, totalOrders, totalUsers, stores, aggregateRevenue, monthlyRevenue] = await Promise.all([
         Store.countDocuments(),
         Order.countDocuments(),
         User.countDocuments(),
-        Store.find().limit(10).sort({ createdAt: -1 })
-    ]);
-    const aggregateRevenue = await Order.aggregate([
-        { $match: { status: 'Completed' } },
-        { $group: { _id: null, total: { $sum: '$grandTotal' } } }
+        Store.find().populate('subscriptionPlan').limit(10).sort({ createdAt: -1 }),
+        Order.aggregate([
+            { $match: { status: 'Completed' } },
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } }
+        ]),
+        Order.aggregate([
+            { $match: { status: 'Completed', createdAt: { $gte: startOfMonth } } },
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } }
+        ])
     ]);
     res.status(200).json(new ApiResponse(200, {
         totalStores,
         totalOrders,
         totalUsers,
         totalRevenue: aggregateRevenue[0]?.total || 0,
+        monthlyRevenue: monthlyRevenue[0]?.total || 0,
         recentStores: stores
     }));
 });
@@ -33,6 +41,7 @@ export const getAllStores = asyncHandler(async (req, res) => {
     const query = search ? { name: { $regex: search, $options: 'i' } } : {};
     const stores = await Store.find(query)
         .populate('owner', 'name email phone')
+        .populate('subscriptionPlan')
         .limit(Number(limit))
         .skip((Number(page) - 1) * Number(limit))
         .sort({ createdAt: -1 });
@@ -51,8 +60,28 @@ export const toggleStoreStatus = asyncHandler(async (req, res) => {
     if (!store)
         return res.status(404).json(new ApiResponse(404, null, "Store not found"));
     store.isActive = !store.isActive;
+    store.status = store.isActive ? 'Approved' : 'Suspended';
     await store.save();
     res.status(200).json(new ApiResponse(200, store, `Store ${store.isActive ? 'Reactivated' : 'Suspended'}`));
+});
+// @desc    Approve/Reject store registration
+// @route   PUT /api/v1/super-admin/stores/:id/approve
+export const approveStore = asyncHandler(async (req, res) => {
+    const { approve } = req.body;
+    const store = await Store.findById(req.params.id);
+    if (!store)
+        return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+    if (approve) {
+        store.status = 'Approved';
+        store.isActive = true;
+    }
+    else {
+        // Rejection could delete or just mark as suspended/rejected
+        store.status = 'Suspended';
+        store.isActive = false;
+    }
+    await store.save();
+    res.status(200).json(new ApiResponse(200, store, `Store ${approve ? 'Approved' : 'Rejected'}`));
 });
 // @desc    Get Platform Audit Logs
 // @route   GET /api/v1/super-admin/audit-logs

@@ -10,6 +10,7 @@ import { notificationService } from '../services/notificationService.js';
 
 // @desc    Get system-wide stats for Super Admin
 // @route   GET /api/v1/super-admin/stats
+export const getSystemStats = asyncHandler(async (req: TenantRequest, res: Response) => {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
@@ -18,7 +19,7 @@ import { notificationService } from '../services/notificationService.js';
         Store.countDocuments(),
         Order.countDocuments(),
         User.countDocuments(),
-        Store.find().limit(10).sort({ createdAt: -1 }),
+        Store.find().populate('subscriptionPlan').limit(10).sort({ createdAt: -1 }),
         Order.aggregate([
             { $match: { status: 'Completed' } },
             { $group: { _id: null, total: { $sum: '$grandTotal' } } }
@@ -47,6 +48,7 @@ export const getAllStores = asyncHandler(async (req: TenantRequest, res: Respons
 
     const stores = await Store.find(query)
         .populate('owner', 'name email phone')
+        .populate('subscriptionPlan')
         .limit(Number(limit))
         .skip((Number(page) - 1) * Number(limit))
         .sort({ createdAt: -1 });

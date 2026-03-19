@@ -49,7 +49,7 @@ export const createCategory = asyncHandler(async (req, res) => {
 // @route   PUT /api/categories/:id
 // @access  Private (Owner/Manager)
 export const updateCategory = asyncHandler(async (req, res) => {
-    const category = await Category.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { new: true });
+    const category = await Category.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { returnDocument: 'after' });
     if (!category) {
         return res.status(404).json(new ApiResponse(404, null, "Category not found"));
     }

@@ -15,7 +15,7 @@ export const sendOTP = asyncHandler(async (req, res) => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
     // Save to DB
-    await OTP.findOneAndUpdate({ phone }, { code, expiresAt }, { upsert: true, new: true });
+    await OTP.findOneAndUpdate({ phone }, { code, expiresAt }, { upsert: true, returnDocument: 'after' });
     // MOCK: Send SMS (In production, use Twilio/Firebase here)
     console.log(`[AUTH] SMS sent to ${phone}: ${code}`);
     res.status(200).json(new ApiResponse(200, null, "OTP sent successfully (Check server console)"));

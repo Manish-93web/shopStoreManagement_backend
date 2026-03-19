@@ -7,6 +7,7 @@ const SupplierSchema = new Schema({
     address: { type: String },
     notes: { type: String },
     tags: [{ type: String }],
+    suppliedProducts: [{ type: Schema.Types.ObjectId, ref: 'Product' }],
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
 }, { timestamps: true });
 export default mongoose.model('Supplier', SupplierSchema);

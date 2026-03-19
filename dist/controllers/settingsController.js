@@ -13,6 +13,6 @@ export const getSettings = asyncHandler(async (req, res) => {
 // @desc    Update store settings
 // @route   PUT /api/settings
 export const updateSettings = asyncHandler(async (req, res) => {
-    const settings = await Settings.findOneAndUpdate({ storeId: req.tenantId }, req.body, { new: true, upsert: true });
+    const settings = await Settings.findOneAndUpdate({ storeId: req.tenantId }, req.body, { returnDocument: 'after', upsert: true });
     res.status(200).json(new ApiResponse(200, settings, 'Settings updated'));
 });

@@ -37,7 +37,7 @@ export const inventoryDetailController = {
         const serial = await ProductSerial.findOneAndUpdate({ serialNumber, storeId: req.tenantId }, {
             $set: { status },
             $push: { history: { action: `Status changed to ${status}`, notes, date: new Date() } }
-        }, { new: true });
+        }, { returnDocument: 'after' });
         if (!serial)
             return res.status(404).json(new ApiResponse(404, null, "Serial not found"));
         res.status(200).json(new ApiResponse(200, serial, "Serial status updated"));

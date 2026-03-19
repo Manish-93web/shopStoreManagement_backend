@@ -39,6 +39,7 @@ import apiKeyRoutes from './routes/apiKeyRoutes.js';
 import publicApiRoutes from './routes/publicApiRoutes.js';
 import featureFlagRoutes from './routes/featureFlagRoutes.js';
 import themeRoutes from './routes/themeRoutes.js';
+import accountingRoutes from './routes/accountingRoutes.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import mongoSanitize from 'express-mongo-sanitize';
@@ -157,6 +158,7 @@ v1.use('/currencies', currencyRoutes);
 v1.use('/brands', brandRoutes);
 v1.use('/tax-rules', taxRuleRoutes);
 v1.use('/settings', settingsRoutes);
+v1.use('/accounting', accountingRoutes);
 
 app.use('/api/v1', v1);
 

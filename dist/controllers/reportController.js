@@ -39,21 +39,28 @@ export const getProfitReport = asyncHandler(async (req, res) => {
         query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
     const orders = await Order.find(query).populate('items.product');
-    let totalRevenue = 0;
-    let totalCost = 0;
+    const dailyProfit = {};
     orders.forEach(order => {
-        totalRevenue += order.grandTotal;
+        const dateKey = new Date(order.createdAt).toISOString().split('T')[0];
+        if (!dailyProfit[dateKey]) {
+            dailyProfit[dateKey] = { revenue: 0, cost: 0 };
+        }
+        dailyProfit[dateKey].revenue += order.grandTotal;
         order.items.forEach((item) => {
             const costPrice = item.product?.costPrice || 0;
-            totalCost += (costPrice * item.quantity);
+            dailyProfit[dateKey].cost += (costPrice * item.quantity);
         });
     });
-    res.status(200).json(new ApiResponse(200, {
-        totalRevenue,
-        totalCost,
-        grossProfit: totalRevenue - totalCost,
-        profitMargin: totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : 0
-    }));
+    const result = Object.entries(dailyProfit).map(([date, data]) => {
+        const netProfit = data.revenue - data.cost;
+        const margin = data.revenue > 0 ? (netProfit / data.revenue) * 100 : 0;
+        return {
+            date,
+            netProfit,
+            margin: Math.round(margin * 100) / 100
+        };
+    }).sort((a, b) => a.date.localeCompare(b.date));
+    res.status(200).json(new ApiResponse(200, result));
 });
 // @desc    Get tax report
 // @route   GET /api/reports/tax
@@ -146,6 +153,34 @@ export const getRevenueReport = asyncHandler(async (req, res) => {
     const result = Object.entries(trends).map(([name, total]) => ({ name, total }));
     res.status(200).json(new ApiResponse(200, result));
 });
+// @desc    Get top selling products
+// @route   GET /api/reports/top-products
+export const getTopSellingProducts = asyncHandler(async (req, res) => {
+    const { startDate, endDate, limit = 5 } = req.query;
+    const query = { storeId: req.tenantId, status: 'Completed' };
+    if (startDate && endDate) {
+        query.createdAt = {
+            $gte: new Date(startDate),
+            $lte: new Date(endDate)
+        };
+    }
+    const orders = await Order.find(query);
+    const productSales = {};
+    orders.forEach(order => {
+        order.items.forEach(item => {
+            const productId = item.product.toString();
+            if (!productSales[productId]) {
+                productSales[productId] = { name: item.name, quantity: 0, revenue: 0 };
+            }
+            productSales[productId].quantity += item.quantity;
+            productSales[productId].revenue += item.total;
+        });
+    });
+    const topProducts = Object.values(productSales)
+        .sort((a, b) => b.quantity - a.quantity)
+        .slice(0, Number(limit));
+    res.status(200).json(new ApiResponse(200, topProducts));
+});
 // @desc    Get low stock alert report
 // @route   GET /api/reports/low-stock
 export const getLowStockReport = asyncHandler(async (req, res) => {
@@ -155,6 +190,26 @@ export const getLowStockReport = asyncHandler(async (req, res) => {
         quantity: { $lte: threshold }
     }).populate('product', 'name sku price');
     res.status(200).json(new ApiResponse(200, lowStock));
+});
+// @desc    Get dead stock report (not sold in X days)
+// @route   GET /api/reports/dead-stock
+export const getDeadStockReport = asyncHandler(async (req, res) => {
+    const days = parseInt(req.query.days) || 30;
+    const dateLimit = new Date();
+    dateLimit.setDate(dateLimit.getDate() - days);
+    // 1. Get all products sold in the last X days
+    const activeProductIds = await Order.distinct('items.product', {
+        storeId: req.tenantId,
+        createdAt: { $gte: dateLimit },
+        status: 'Completed'
+    });
+    // 2. Find products in inventory that ARE NOT in that list
+    const deadStock = await Inventory.find({
+        store: req.tenantId,
+        product: { $nin: activeProductIds },
+        quantity: { $gt: 0 }
+    }).populate('product', 'name sku price category');
+    res.status(200).json(new ApiResponse(200, deadStock));
 });
 // @desc    Get tax compliance report
 // @route   GET /api/reports/tax-compliance
@@ -284,6 +339,14 @@ export const exportReport = asyncHandler(async (req, res) => {
                 doc.moveDown(0.5);
             });
         }
+        else if (type === 'dead-stock') {
+            const activeProductIds = await Order.distinct('items.product', { storeId: req.tenantId, createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } });
+            const items = await Inventory.find({ store: req.tenantId, product: { $nin: activeProductIds }, quantity: { $gt: 0 } }).populate('product');
+            items.forEach((item) => {
+                doc.fontSize(10).text(`DEAD STOCK: ${item.product?.name} | SKU: ${item.product?.sku} | Qty: ${item.quantity}`);
+                doc.moveDown(0.5);
+            });
+        }
         doc.end();
         return;
     }
@@ -375,6 +438,22 @@ export const exportReport = asyncHandler(async (req, res) => {
             reason: adj.reason,
             user: adj.createdBy?.name,
             createdAt: adj.createdAt.toISOString()
+        }));
+    }
+    else if (type === 'dead-stock') {
+        const activeProductIds = await Order.distinct('items.product', { storeId: req.tenantId, createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } });
+        const items = await Inventory.find({ store: req.tenantId, product: { $nin: activeProductIds }, quantity: { $gt: 0 } }).populate('product');
+        worksheet.columns = [
+            { header: 'Product Name', key: 'productName', width: 30 },
+            { header: 'SKU', key: 'sku', width: 15 },
+            { header: 'Quantity', key: 'quantity', width: 15 },
+            { header: 'Value', key: 'value', width: 15 }
+        ];
+        items.forEach((item) => worksheet.addRow({
+            productName: item.product?.name,
+            sku: item.product?.sku,
+            quantity: item.quantity,
+            value: (item.product?.price || 0) * item.quantity
         }));
     }
     if (format === 'csv') {

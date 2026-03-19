@@ -23,6 +23,6 @@ export const getTheme = asyncHandler(async (req, res) => {
 // @route   PUT /api/theme
 export const saveTheme = asyncHandler(async (req, res) => {
     const { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius } = req.body;
-    const theme = await ThemeConfig.findOneAndUpdate({ storeId: req.tenantId }, { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius, storeId: req.tenantId }, { upsert: true, new: true, runValidators: true });
+    const theme = await ThemeConfig.findOneAndUpdate({ storeId: req.tenantId }, { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius, storeId: req.tenantId }, { upsert: true, returnDocument: 'after', runValidators: true });
     res.status(200).json(new ApiResponse(200, theme, 'Theme saved successfully'));
 });

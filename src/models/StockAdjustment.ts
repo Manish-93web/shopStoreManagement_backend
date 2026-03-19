@@ -7,6 +7,7 @@ export interface IStockAdjustment extends Document {
     previousQuantity: number;
     newQuantity: number;
     adjustmentAmount: number; // e.g., -5 or +10
+    type: 'ADD' | 'SUBTRACT';
     reason: 'Damaged' | 'Correction' | 'Restock' | 'Expire' | 'Other';
     notes?: string;
     createdBy: mongoose.Types.ObjectId;
@@ -21,6 +22,7 @@ const StockAdjustmentSchema: Schema = new Schema({
     previousQuantity: { type: Number, required: true },
     newQuantity: { type: Number, required: true },
     adjustmentAmount: { type: Number, required: true },
+    type: { type: String, enum: ['ADD', 'SUBTRACT'], required: true },
     reason: {
         type: String,
         enum: ['Damaged', 'Correction', 'Restock', 'Expire', 'Other'],

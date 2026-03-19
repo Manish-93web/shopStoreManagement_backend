@@ -9,8 +9,22 @@ export const getVariants = asyncHandler(async (req, res) => {
     const variants = await ProductVariant.find({
         productId: req.params.productId,
         storeId: req.tenantId
+    }).lean();
+    // Fetch inventory for each variant
+    const variantIds = variants.map(v => v._id);
+    const inventories = await Inventory.find({
+        variant: { $in: variantIds },
+        store: req.tenantId
     });
-    res.status(200).json(new ApiResponse(200, variants));
+    // Merge stock into variants
+    const variantsWithStock = variants.map(v => {
+        const inv = inventories.find(i => i.variant?.toString() === v._id.toString());
+        return {
+            ...v,
+            stock: inv ? inv.quantity : 0
+        };
+    });
+    res.status(200).json(new ApiResponse(200, variantsWithStock));
 });
 // @desc    Create a product variant
 // @route   POST /api/v1/products/:productId/variants
@@ -36,9 +50,15 @@ export const createVariant = asyncHandler(async (req, res) => {
 // @desc    Update a variant
 // @route   PUT /api/v1/products/variants/:id
 export const updateVariant = asyncHandler(async (req, res) => {
-    const variant = await ProductVariant.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { new: true });
+    const { stock, initialStock, ...updateData } = req.body;
+    const variant = await ProductVariant.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, updateData, { returnDocument: 'after' });
     if (!variant)
         return res.status(404).json(new ApiResponse(404, null, "Variant not found"));
+    // Update inventory if stock/initialStock provided
+    const newStock = stock !== undefined ? stock : initialStock;
+    if (newStock !== undefined) {
+        await Inventory.findOneAndUpdate({ variant: variant._id, store: req.tenantId }, { $set: { quantity: newStock } }, { upsert: true, returnDocument: 'after' });
+    }
     res.status(200).json(new ApiResponse(200, variant, "Variant updated successfully"));
 });
 // @desc    Delete a variant

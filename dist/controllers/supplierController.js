@@ -16,7 +16,7 @@ export const createSupplier = asyncHandler(async (req, res) => {
 // @desc    Update a supplier
 // @route   PUT /api/suppliers/:id
 export const updateSupplier = asyncHandler(async (req, res) => {
-    const supplier = await Supplier.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { new: true });
+    const supplier = await Supplier.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { returnDocument: 'after' });
     if (!supplier) {
         return res.status(404).json(new ApiResponse(404, null, 'Supplier not found'));
     }

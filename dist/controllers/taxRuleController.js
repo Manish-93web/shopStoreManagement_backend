@@ -16,7 +16,7 @@ export const createTaxRule = asyncHandler(async (req, res) => {
 // @desc    Update tax rule
 // @route   PUT /api/tax-rules/:id
 export const updateTaxRule = asyncHandler(async (req, res) => {
-    const rule = await TaxRule.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { new: true });
+    const rule = await TaxRule.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { returnDocument: 'after' });
     if (!rule)
         return res.status(404).json(new ApiResponse(404, null, 'Tax rule not found'));
     res.status(200).json(new ApiResponse(200, rule, 'Tax rule updated'));

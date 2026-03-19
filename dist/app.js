@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/authRoutes.js';
 import productRoutes from './routes/productRoutes.js';
+import categoryRoutes from './routes/categoryRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import purchaseOrderRoutes from './routes/purchaseOrderRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
@@ -37,26 +38,48 @@ import apiKeyRoutes from './routes/apiKeyRoutes.js';
 import publicApiRoutes from './routes/publicApiRoutes.js';
 import featureFlagRoutes from './routes/featureFlagRoutes.js';
 import themeRoutes from './routes/themeRoutes.js';
+import accountingRoutes from './routes/accountingRoutes.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import mongoSanitize from 'express-mongo-sanitize';
 import compression from 'compression';
 import * as Sentry from "@sentry/node";
 import { sentryContextMiddleware } from './config/sentry.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const app = express();
+// Serve static files from 'uploads' directory
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Security Middleware
 app.use(helmet());
+// Express 5 makes req.query a read-only getter. 
+// This middleware makes it writable so express-mongo-sanitize can work.
+app.use((req, _res, next) => {
+    const originalQuery = req.query;
+    Object.defineProperty(req, 'query', {
+        get: () => originalQuery,
+        set: (val) => {
+            // Allow setting but maintain the reference if needed
+            Object.assign(originalQuery, val);
+        },
+        configurable: true,
+        enumerable: true
+    });
+    next();
+});
 app.use(mongoSanitize());
 app.use(compression());
 // Middleware
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
-app.use(express.json({ limit: '10kb' })); // Body limit
-app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+app.use(express.json({ limit: '50mb' })); // Body limit
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(sentryContextMiddleware);
 // Rate Limiting
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100,
+    max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
     message: 'Too many requests from this IP, please try again after 15 minutes'
@@ -75,7 +98,7 @@ const v1 = express.Router();
 v1.use('/auth', authRoutes);
 // Store Management
 v1.use('/products', productRoutes);
-v1.use('/categories', productRoutes); // categories are sub-routed inside productRoutes
+v1.use('/categories', categoryRoutes);
 v1.use('/orders', orderRoutes);
 v1.use('/purchase-orders', purchaseOrderRoutes);
 v1.use('/customers', customerRoutes);
@@ -116,6 +139,7 @@ v1.use('/currencies', currencyRoutes);
 v1.use('/brands', brandRoutes);
 v1.use('/tax-rules', taxRuleRoutes);
 v1.use('/settings', settingsRoutes);
+v1.use('/accounting', accountingRoutes);
 app.use('/api/v1', v1);
 // Public API explicitly decoupled from auth middleware internally
 app.use('/api/public/v1', publicApiRoutes);

@@ -6,7 +6,7 @@ router.use(protect);
 router.route('/')
     .get(authorize('SUPER_ADMIN'), getStores)
     .post(authorize('STORE_OWNER'), createStore);
-router.get('/my-stores', authorize('STORE_OWNER'), getMyStores);
+router.get('/my-stores', authorize('STORE_OWNER', 'SUPER_ADMIN'), getMyStores);
 router.route('/:id')
     .put(authorize('STORE_OWNER', 'SUPER_ADMIN'), updateStore);
 router.route('/:id/toggle')

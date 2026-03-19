@@ -191,6 +191,41 @@ export const getRevenueReport = asyncHandler(async (req: TenantRequest, res: Res
     res.status(200).json(new ApiResponse(200, result));
 });
 
+// @desc    Get top selling products
+// @route   GET /api/reports/top-products
+export const getTopSellingProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { startDate, endDate, limit = 5 } = req.query;
+
+    const query: any = { storeId: req.tenantId, status: 'Completed' };
+    if (startDate && endDate) {
+        query.createdAt = {
+            $gte: new Date(startDate as string),
+            $lte: new Date(endDate as string)
+        };
+    }
+
+    const orders = await Order.find(query);
+
+    const productSales: Record<string, { name: string; quantity: number; revenue: number }> = {};
+
+    orders.forEach(order => {
+        order.items.forEach(item => {
+            const productId = item.product.toString();
+            if (!productSales[productId]) {
+                productSales[productId] = { name: item.name, quantity: 0, revenue: 0 };
+            }
+            productSales[productId].quantity += item.quantity;
+            productSales[productId].revenue += item.total;
+        });
+    });
+
+    const topProducts = Object.values(productSales)
+        .sort((a, b) => b.quantity - a.quantity)
+        .slice(0, Number(limit));
+
+    res.status(200).json(new ApiResponse(200, topProducts));
+});
+
 // @desc    Get low stock alert report
 // @route   GET /api/reports/low-stock
 export const getLowStockReport = asyncHandler(async (req: TenantRequest, res: Response) => {
@@ -202,6 +237,30 @@ export const getLowStockReport = asyncHandler(async (req: TenantRequest, res: Re
     }).populate('product', 'name sku price');
 
     res.status(200).json(new ApiResponse(200, lowStock));
+});
+
+// @desc    Get dead stock report (not sold in X days)
+// @route   GET /api/reports/dead-stock
+export const getDeadStockReport = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const days = parseInt(req.query.days as string) || 30;
+    const dateLimit = new Date();
+    dateLimit.setDate(dateLimit.getDate() - days);
+
+    // 1. Get all products sold in the last X days
+    const activeProductIds = await Order.distinct('items.product', {
+        storeId: req.tenantId,
+        createdAt: { $gte: dateLimit },
+        status: 'Completed'
+    });
+
+    // 2. Find products in inventory that ARE NOT in that list
+    const deadStock = await Inventory.find({
+        store: req.tenantId,
+        product: { $nin: activeProductIds },
+        quantity: { $gt: 0 }
+    }).populate('product', 'name sku price category');
+
+    res.status(200).json(new ApiResponse(200, deadStock));
 });
 
 // @desc    Get tax compliance report
@@ -343,6 +402,13 @@ export const exportReport = asyncHandler(async (req: TenantRequest, res: Respons
                 doc.fontSize(10).text(`Product: ${adj.productId?.name} | Adjustment: ${adj.adjustmentAmount} | Reason: ${adj.reason} | User: ${adj.createdBy?.name}`);
                 doc.moveDown(0.5);
             });
+        } else if (type === 'dead-stock') {
+            const activeProductIds = await Order.distinct('items.product', { storeId: req.tenantId, createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } });
+            const items = await Inventory.find({ store: req.tenantId, product: { $nin: activeProductIds }, quantity: { $gt: 0 } }).populate('product');
+            items.forEach((item: any) => {
+                doc.fontSize(10).text(`DEAD STOCK: ${item.product?.name} | SKU: ${item.product?.sku} | Qty: ${item.quantity}`);
+                doc.moveDown(0.5);
+            });
         }
 
         doc.end();
@@ -434,6 +500,21 @@ export const exportReport = asyncHandler(async (req: TenantRequest, res: Respons
             reason: adj.reason,
             user: adj.createdBy?.name,
             createdAt: adj.createdAt.toISOString()
+        }));
+    } else if (type === 'dead-stock') {
+        const activeProductIds = await Order.distinct('items.product', { storeId: req.tenantId, createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } });
+        const items = await Inventory.find({ store: req.tenantId, product: { $nin: activeProductIds }, quantity: { $gt: 0 } }).populate('product');
+        worksheet.columns = [
+            { header: 'Product Name', key: 'productName', width: 30 },
+            { header: 'SKU', key: 'sku', width: 15 },
+            { header: 'Quantity', key: 'quantity', width: 15 },
+            { header: 'Value', key: 'value', width: 15 }
+        ];
+        items.forEach((item: any) => worksheet.addRow({
+            productName: item.product?.name,
+            sku: item.product?.sku,
+            quantity: item.quantity,
+            value: (item.product?.price || 0) * item.quantity
         }));
     }
 

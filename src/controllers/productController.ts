@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import mongoose from 'mongoose';
 import { customAlphabet } from 'nanoid';
 import Product from '../models/Product.js';
 import Inventory from '../models/Inventory.js';
@@ -11,6 +12,7 @@ import StockAdjustment from '../models/StockAdjustment.js';
 import { notificationService } from '../services/notificationService.js';
 import Store from '../models/Store.js';
 import webhookService from '../services/webhookService.js';
+import Category from '../models/Category.js';
 
 // @desc    Get all products for a tenant
 // @route   GET /api/products
@@ -23,7 +25,20 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
 
     const query: any = { storeId: req.tenantId };
     
-    if (category && category !== 'All') query.category = category;
+    if (category && category !== 'All') {
+        const getSubCategoryIds = async (parentId: string): Promise<string[]> => {
+            const children = await Category.find({ parentId, storeId: req.tenantId }).select('_id');
+            let ids = [parentId];
+            for (const child of children) {
+                const childIds = await getSubCategoryIds(child._id.toString());
+                ids = [...ids, ...childIds];
+            }
+            return ids;
+        };
+        const allCategoryIds = await getSubCategoryIds(category as string);
+        query.category = { $in: allCategoryIds };
+    }
+
     if (brand && brand !== 'All') query.brand = brand;
     if (search) {
         query.$or = [
@@ -181,37 +196,41 @@ export const deleteProduct = asyncHandler(async (req: TenantRequest, res: Respon
     res.status(200).json(new ApiResponse(200, null, "Product deleted successfully"));
 });
 
-// @desc    Manually adjust stock for a product
+// @desc    Adjust stock level
 // @route   PATCH /api/products/:id/adjust
 export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { quantity, reason, notes } = req.body;
-
-    // First, get current inventory
-    const currentInv = await Inventory.findOne({ product: req.params.id, store: req.tenantId });
-    const previousQuantity = currentInv ? currentInv.quantity : 0;
-    const newQuantity = previousQuantity + quantity;
+    const { quantity, reason, type } = req.body;
+    const adjustQty = type === 'add' ? quantity : -quantity;
 
     const inv = await Inventory.findOneAndUpdate(
         { product: req.params.id, store: req.tenantId },
-        { $inc: { quantity } },
-        { returnDocument: 'after', upsert: true }
+        { 
+            $inc: { quantity: adjustQty },
+            $set: { lastStockUpdate: new Date() }
+        },
+        { new: true, upsert: true }
     );
 
-    // Write audit trail to StockAdjustment
+    // Track the adjustment
     await StockAdjustment.create({
-        storeId: req.tenantId,
         productId: req.params.id as any,
-        previousQuantity,
-        newQuantity,
-        adjustmentAmount: quantity,
+        storeId: req.tenantId as any,
+        previousQuantity: (inv?.quantity || 0) - adjustQty,
+        newQuantity: inv?.quantity || 0,
+        adjustmentAmount: adjustQty,
+        type: type === 'add' ? 'ADD' : 'SUBTRACT',
         reason: reason || 'Correction',
-        notes: notes || '',
+        notes: req.body.notes || '',
         createdBy: req.user?._id
     });
 
     // Invalidate cache
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.del(`products:${req.tenantId}`);
+    }
+
     // 3. Check for Low Stock Notification
-    if (newQuantity <= 5) {
+    if (inv && inv.quantity <= (inv.lowStockThreshold || 5)) {
         const store = await Store.findById(req.tenantId);
         const product = await Product.findById(req.params.id);
         if (store && product) {
@@ -219,7 +238,7 @@ export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response
                 recipientId: store.owner.toString(),
                 storeId: req.tenantId!.toString(),
                 title: `Low Stock Alert`,
-                message: `"${product.name}" is running low (${newQuantity} units remaining).`,
+                message: `"${product.name}" is running low (${inv.quantity} units remaining).`,
                 type: 'WARNING',
                 metadata: { productId: product._id }
             });

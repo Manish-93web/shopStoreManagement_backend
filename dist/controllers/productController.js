@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { customAlphabet } from 'nanoid';
 import Product from '../models/Product.js';
 import Inventory from '../models/Inventory.js';
@@ -15,21 +16,59 @@ export const getProducts = asyncHandler(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const skip = (page - 1) * limit;
-    const cacheKey = `products:${req.tenantId}:p${page}:l${limit}`;
-    if (process.env.SKIP_REDIS !== 'true') {
-        const cachedProducts = await redisClient.get(cacheKey);
-        if (cachedProducts) {
-            return res.status(200).json(new ApiResponse(200, JSON.parse(cachedProducts), "Products fetched from cache"));
-        }
+    const { search, category, brand, stockStatus } = req.query;
+    const query = { storeId: req.tenantId };
+    if (category && category !== 'All') {
+        const getSubCategoryIds = async (parentId) => {
+            const children = await mongoose.model('Category').find({ parentId, storeId: req.tenantId }).select('_id');
+            let ids = [parentId];
+            for (const child of children) {
+                const childIds = await getSubCategoryIds(child._id.toString());
+                ids = [...ids, ...childIds];
+            }
+            return ids;
+        };
+        const allCategoryIds = await getSubCategoryIds(category);
+        query.category = { $in: allCategoryIds };
     }
-    const products = await Product.find({ storeId: req.tenantId })
+    if (brand && brand !== 'All')
+        query.brand = brand;
+    if (search) {
+        query.$or = [
+            { name: { $regex: search, $options: 'i' } },
+            { sku: { $regex: search, $options: 'i' } },
+            { barcode: { $regex: search, $options: 'i' } }
+        ];
+    }
+    // Handle stock status filtering (requires looking at Inventory)
+    if (stockStatus) {
+        const invQuery = { store: req.tenantId };
+        if (stockStatus === 'low') {
+            invQuery.$expr = { $lte: ['$quantity', '$lowStockThreshold'] };
+        }
+        else if (stockStatus === 'out') {
+            invQuery.quantity = 0;
+        }
+        const matchingInventories = await Inventory.find(invQuery).select('product');
+        const productIds = matchingInventories.map(inv => inv.product);
+        query._id = { $in: productIds };
+    }
+    const products = await Product.find(query)
         .populate('category')
         .skip(skip)
         .limit(limit)
+        .sort({ createdAt: -1 })
         .lean();
-    const total = await Product.countDocuments({ storeId: req.tenantId });
+    const productIds = products.map(p => p._id);
+    const inventories = await Inventory.find({ product: { $in: productIds }, store: req.tenantId });
+    const inventoryMap = new Map(inventories.map(inv => [inv.product.toString(), inv]));
+    const productsWithInventory = products.map(p => ({
+        ...p,
+        inventory: inventoryMap.get(p._id.toString())
+    }));
+    const total = await Product.countDocuments(query);
     const response = {
-        products,
+        products: productsWithInventory,
         pagination: {
             total,
             page,
@@ -37,14 +76,20 @@ export const getProducts = asyncHandler(async (req, res) => {
             pages: Math.ceil(total / limit)
         }
     };
-    if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.setEx(cacheKey, 3600, JSON.stringify(response));
-    }
     res.status(200).json(new ApiResponse(200, response));
 });
 // @desc    Create a new product
 // @route   POST /api/products
 export const createProduct = asyncHandler(async (req, res) => {
+    // Check Plan Limits
+    const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
+    if (store && store.subscriptionPlan) {
+        const plan = store.subscriptionPlan;
+        const currentCount = await Product.countDocuments({ storeId: req.tenantId });
+        if (plan.maxProducts !== 0 && currentCount >= plan.maxProducts) {
+            return res.status(403).json(new ApiResponse(403, null, `Product limit reached. Your current plan "${plan.name}" allows up to ${plan.maxProducts} products.`));
+        }
+    }
     const productData = { ...req.body, storeId: req.tenantId };
     if (!productData.barcode) {
         const generateBarcode = customAlphabet('0123456789', 12);
@@ -120,29 +165,31 @@ export const deleteProduct = asyncHandler(async (req, res) => {
     });
     res.status(200).json(new ApiResponse(200, null, "Product deleted successfully"));
 });
-// @desc    Manually adjust stock for a product
+// @desc    Adjust stock level
 // @route   PATCH /api/products/:id/adjust
 export const adjustStock = asyncHandler(async (req, res) => {
-    const { quantity, reason, notes } = req.body;
-    // First, get current inventory
-    const currentInv = await Inventory.findOne({ product: req.params.id, store: req.tenantId });
-    const previousQuantity = currentInv ? currentInv.quantity : 0;
-    const newQuantity = previousQuantity + quantity;
-    const inv = await Inventory.findOneAndUpdate({ product: req.params.id, store: req.tenantId }, { $inc: { quantity } }, { new: true, upsert: true });
-    // Write audit trail to StockAdjustment
+    const { quantity, reason, type } = req.body;
+    const adjustQty = type === 'add' ? quantity : -quantity;
+    const inv = await Inventory.findOneAndUpdate({ product: req.params.id, store: req.tenantId }, {
+        $inc: { quantity: adjustQty },
+        $set: { lastStockUpdate: new Date() }
+    }, { new: true, upsert: true });
+    // Track the adjustment
     await StockAdjustment.create({
-        storeId: req.tenantId,
         productId: req.params.id,
-        previousQuantity,
-        newQuantity,
-        adjustmentAmount: quantity,
+        storeId: req.tenantId,
+        adjustmentAmount: adjustQty,
+        type: type === 'add' ? 'ADD' : 'SUBTRACT',
         reason: reason || 'Correction',
-        notes: notes || '',
+        notes: req.body.notes || '',
         createdBy: req.user?._id
     });
     // Invalidate cache
+    if (process.env.SKIP_REDIS !== 'true') {
+        await redisClient.del(`products:${req.tenantId}`);
+    }
     // 3. Check for Low Stock Notification
-    if (newQuantity <= 5) {
+    if (inv && inv.quantity <= (inv.lowStockThreshold || 5)) {
         const store = await Store.findById(req.tenantId);
         const product = await Product.findById(req.params.id);
         if (store && product) {
@@ -150,7 +197,7 @@ export const adjustStock = asyncHandler(async (req, res) => {
                 recipientId: store.owner.toString(),
                 storeId: req.tenantId.toString(),
                 title: `Low Stock Alert`,
-                message: `"${product.name}" is running low (${newQuantity} units remaining).`,
+                message: `"${product.name}" is running low (${inv.quantity} units remaining).`,
                 type: 'WARNING',
                 metadata: { productId: product._id }
             });
@@ -161,6 +208,15 @@ export const adjustStock = asyncHandler(async (req, res) => {
 // @desc    Bulk import products
 // @route   POST /api/products/bulk
 export const bulkImportProducts = asyncHandler(async (req, res) => {
+    // Check Plan Limits
+    const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
+    let maxProducts = 0;
+    let currentCount = 0;
+    if (store && store.subscriptionPlan) {
+        const plan = store.subscriptionPlan;
+        maxProducts = plan.maxProducts;
+        currentCount = await Product.countDocuments({ storeId: req.tenantId });
+    }
     const productsData = req.body;
     if (!Array.isArray(productsData))
         return res.status(400).json(new ApiResponse(400, null, "Invalid data format"));
@@ -168,9 +224,13 @@ export const bulkImportProducts = asyncHandler(async (req, res) => {
     const generateBarcode = customAlphabet('0123456789', 12);
     for (const data of productsData) {
         try {
+            if (maxProducts !== 0 && currentCount >= maxProducts) {
+                throw new Error(`Plan limit of ${maxProducts} products reached.`);
+            }
             const product = await Product.create({ ...data, storeId: req.tenantId, barcode: data.barcode || generateBarcode() });
             await Inventory.create({ product: product._id, store: req.tenantId, quantity: data.initialStock || 0 });
             results.success++;
+            currentCount++;
         }
         catch (error) {
             results.failed++;

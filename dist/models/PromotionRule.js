@@ -13,6 +13,8 @@ const PromotionRuleSchema = new Schema({
     discountValue: { type: Number, required: true },
     priority: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
+    validFrom: { type: Date },
+    validTo: { type: Date },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true }
 }, { timestamps: true });
 export default mongoose.model('PromotionRule', PromotionRuleSchema);

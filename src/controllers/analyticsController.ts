@@ -166,3 +166,78 @@ export const getSupplierAnalytics = asyncHandler(async (req: TenantRequest, res:
 
     res.status(200).json(new ApiResponse(200, stats, "Supplier analytics generated"));
 });
+
+// @desc    Get Category Growth (Month-over-Month)
+// @route   GET /api/v1/analytics/category-growth
+export const getCategoryGrowth = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const storeId = req.tenantId;
+    const now = dayjs();
+    const currentMonthStart = now.startOf('month').toDate();
+    const lastMonthStart = now.subtract(1, 'month').startOf('month').toDate();
+
+    const [currentOrders, lastOrders] = await Promise.all([
+        Order.find({ storeId, createdAt: { $gte: currentMonthStart }, status: 'Completed' }).populate('items.product'),
+        Order.find({ storeId, createdAt: { $gte: lastMonthStart, $lt: currentMonthStart }, status: 'Completed' }).populate('items.product')
+    ]);
+
+    const calculateCatSales = (orders: any[]) => {
+        const sales: Record<string, number> = {};
+        orders.forEach(o => o.items.forEach((i: any) => {
+            if (i.product) {
+                const cat = typeof i.product.category === 'object' ? i.product.category.name : (i.product.category || 'Uncategorized');
+                sales[cat] = (sales[cat] || 0) + i.total;
+            }
+        }));
+        return sales;
+    };
+
+    const currentSales = calculateCatSales(currentOrders);
+    const lastSales = calculateCatSales(lastOrders);
+
+    const growth = Object.keys(currentSales).map(cat => {
+        const current = currentSales[cat] || 0;
+        const last = lastSales[cat] || 0;
+        const change = last > 0 ? ((current - last) / last) * 100 : 100;
+        return { name: cat, growth: Math.round(change), current, last };
+    }).sort((a, b) => b.growth - a.growth);
+
+    res.status(200).json(new ApiResponse(200, growth));
+});
+
+// @desc    Get Retention Trends (Last 6 Months)
+// @route   GET /api/v1/analytics/retention-trends
+export const getRetentionTrends = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const storeId = req.tenantId;
+    const trends = [];
+
+    for (let i = 5; i >= 0; i--) {
+        const monthStart = dayjs().subtract(i, 'month').startOf('month').toDate();
+        const monthEnd = dayjs().subtract(i, 'month').endOf('month').toDate();
+
+        const orders = await Order.find({ 
+            storeId, 
+            createdAt: { $gte: monthStart, $lte: monthEnd }, 
+            status: 'Completed' 
+        });
+
+        const customerOrderCounts: Record<string, number> = {};
+        orders.forEach(o => {
+            if (o.customer) {
+                const cid = o.customer.toString();
+                customerOrderCounts[cid] = (customerOrderCounts[cid] || 0) + 1;
+            }
+        });
+
+        const repeat = Object.values(customerOrderCounts).filter(c => c > 1).length;
+        const total = Object.keys(customerOrderCounts).length;
+
+        trends.push({
+            month: dayjs(monthStart).format('MMM'),
+            newCustomers: total - repeat,
+            returningCustomers: repeat,
+            total
+        });
+    }
+
+    res.status(200).json(new ApiResponse(200, trends));
+});

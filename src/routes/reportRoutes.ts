@@ -3,6 +3,7 @@ import { protect } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
 import {
     getSalesReport,
+    getTopSellingProducts,
     getLowStockReport,
     getProfitReport,
     getTaxReport,
@@ -21,6 +22,7 @@ const router = express.Router();
 router.use(protect, tenantHandler);
 
 router.get('/sales', getSalesReport);
+router.get('/top-products', getTopSellingProducts);
 router.get('/low-stock', getLowStockReport);
 router.get('/profit', getProfitReport);
 router.get('/tax', getTaxReport);

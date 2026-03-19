@@ -86,7 +86,7 @@ export const createWebhook = asyncHandler(async (req, res) => {
 // @desc    Update a webhook
 // @route   PUT /api/webhooks/:id
 export const updateWebhook = asyncHandler(async (req, res) => {
-    const webhook = await Webhook.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, req.body, { new: true });
+    const webhook = await Webhook.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, req.body, { returnDocument: 'after' });
     if (!webhook) {
         return res.status(404).json(new ApiResponse(404, null, "Webhook not found"));
     }

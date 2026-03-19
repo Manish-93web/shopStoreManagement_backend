@@ -84,7 +84,7 @@ export const getCustomerById = asyncHandler(async (req, res) => {
 // @desc    Update customer details (notes, tags, segment, etc.)
 // @route   PUT /api/customers/:id
 export const updateCustomer = asyncHandler(async (req, res) => {
-    const customer = await Customer.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, { $set: req.body }, { new: true, runValidators: true });
+    const customer = await Customer.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, { $set: req.body }, { returnDocument: 'after', runValidators: true });
     if (!customer) {
         return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
     }

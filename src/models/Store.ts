@@ -41,7 +41,7 @@ const StoreSchema: Schema = new Schema({
     timezone: { type: String, default: 'Asia/Kolkata' },
     shopType: {
         type: String,
-        enum: ['Shoe', 'Clothing', 'Electronics', 'Grocery', 'Cosmetic', 'Medical', 'Furniture', 'Hardware', 'Supermarket', 'Other'],
+        enum: ['Shoe', 'Clothing', 'Electronics', 'Grocery', 'Cosmetic', 'Medical', 'Furniture', 'Hardware', 'Supermarket', 'Warehouse', 'Other'],
         default: 'Other'
     },
     owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
