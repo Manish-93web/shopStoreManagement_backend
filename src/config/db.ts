@@ -1,4 +1,9 @@
 import mongoose from 'mongoose';
+import dns from 'dns';
+
+// The local network's DNS resolver can't resolve mongodb+srv SRV records,
+// so point Node at public DNS servers that can.
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 const connectDB = async (): Promise<void> => {
     try {

@@ -1,0 +1,226 @@
+{
+  "Product": [
+    {
+      "_id": "69ba75dc47b247b467449327",
+      "name": "Running shoes",
+      "sku": "8902",
+      "barcode": "613966484752",
+      "category": "69ba7300d8480c7fda61846d",
+      "brand": "69ba7316d8480c7fda61849e",
+      "description": "",
+      "price": 530,
+      "costPrice": 640,
+      "taxRate": 15,
+      "images": [
+        "data:image/jpeg;base64,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"
+      ],
+      "storeId": "69ba3a2d0055492c9bc301bc",
+      "createdAt": "2026-03-18T09:52:28.129Z",
+      "updatedAt": "2026-03-18T10:37:39.648Z",
+      "__v": 0
+    }
+  ],
+  "Order": [
+    {
+      "_id": "69bba4e74e70e04c97903eb2",
+      "orderNumber": "ORD-1773905127671",
+      "storeId": "69ba3a2d0055492c9bc301bc",
+      "items": [
+        {
+          "product": "69ba75dc47b247b467449327",
+          "name": "Running shoes",
+          "quantity": 1,
+          "price": 530,
+          "tax": 15,
+          "discount": 0,
+          "total": 609.5,
+          "_id": "69bba4e74e70e04c97903eb3"
+        }
+      ],
+      "subTotal": 530,
+      "taxTotal": 79.5,
+      "discountTotal": 0,
+      "grandTotal": 609.5,
+      "loyaltyPointsUsed": 0,
+      "paymentDetails": [
+        {
+          "method": "Cash",
+          "amount": 609.5,
+          "_id": "69bba4e74e70e04c97903eb4"
+        }
+      ],
+      "status": "Completed",
+      "paymentStatus": "Paid",
+      "cashier": "69ba3a2d0055492c9bc301ba",
+      "createdAt": "2026-03-19T07:25:27.716Z",
+      "updatedAt": "2026-03-19T07:25:27.716Z",
+      "__v": 0
+    },
+    {
+      "_id": "69bb9c752dfafa4ffbe58a9f",
+      "orderNumber": "ORD-1773902965041",
+      "storeId": "69ba3a2d0055492c9bc301bc",
+      "items": [
+        {
+          "product": "69ba75dc47b247b467449327",
+          "name": "Running shoes",
+          "quantity": 1,
+          "price": 530,
+          "tax": 15,
+          "discount": 0,
+          "total": 609.5,
+          "_id": "69bb9c752dfafa4ffbe58aa0"
+        }
+      ],
+      "subTotal": 530,
+      "taxTotal": 79.5,
+      "discountTotal": 0,
+      "grandTotal": 609.5,
+      "loyaltyPointsUsed": 0,
+      "paymentDetails": [
+        {
+          "method": "Cash",
+          "amount": 609.5,
+          "_id": "69bb9c752dfafa4ffbe58aa1"
+        }
+      ],
+      "status": "Completed",
+      "paymentStatus": "Paid",
+      "cashier": "69ba3a2d0055492c9bc301ba",
+      "createdAt": "2026-03-19T06:49:25.049Z",
+      "updatedAt": "2026-03-19T06:49:25.049Z",
+      "__v": 0
+    },
+    {
+      "_id": "69ba7de0441c44478ef5e417",
+      "orderNumber": "ORD-1773829600511",
+      "storeId": "69ba3a2d0055492c9bc301bc",
+      "items": [
+        {
+          "product": "69ba75dc47b247b467449327",
+          "name": "Running shoes",
+          "quantity": 1,
+          "price": 530,
+          "tax": 15,
+          "discount": 0,
+          "total": 609.5,
+          "_id": "69ba7de0441c44478ef5e418"
+        }
+      ],
+      "subTotal": 530,
+      "taxTotal": 79.5,
+      "discountTotal": 0,
+      "grandTotal": 609.5,
+      "loyaltyPointsUsed": 0,
+      "paymentDetails": [
+        {
+          "method": "Cash",
+          "amount": 609.5,
+          "_id": "69ba7de0441c44478ef5e419"
+        }
+      ],
+      "status": "Completed",
+      "paymentStatus": "Paid",
+      "cashier": "69ba3a2d0055492c9bc301ba",
+      "createdAt": "2026-03-18T10:26:40.563Z",
+      "updatedAt": "2026-03-18T10:26:40.563Z",
+      "__v": 0
+    },
+    {
+      "_id": "69ba7b35704a17a507b3158a",
+      "orderNumber": "ORD-1773828917469",
+      "storeId": "69ba3a2d0055492c9bc301bc",
+      "items": [
+        {
+          "product": "69ba75dc47b247b467449327",
+          "name": "Running shoes",
+          "quantity": 1,
+          "price": 530,
+          "tax": 15,
+          "discount": 0,
+          "total": 609.5,
+          "_id": "69ba7b35704a17a507b3158b"
+        }
+      ],
+      "subTotal": 530,
+      "taxTotal": 79.5,
+      "discountTotal": 0,
+      "grandTotal": 609.5,
+      "loyaltyPointsUsed": 0,
+      "paymentDetails": [
+        {
+          "method": "Cash",
+          "amount": 609.5,
+          "_id": "69ba7b35704a17a507b3158c"
+        }
+      ],
+      "status": "Completed",
+      "paymentStatus": "Paid",
+      "cashier": "69ba3a2d0055492c9bc301ba",
+      "createdAt": "2026-03-18T10:15:17.499Z",
+      "updatedAt": "2026-03-18T10:15:17.499Z",
+      "__v": 0
+    },
+    {
+      "_id": "69ba7a1f704a17a507b314a9",
+      "orderNumber": "ORD-1773828639469",
+      "storeId": "69ba3a2d0055492c9bc301bc",
+      "items": [
+        {
+          "product": "69ba75dc47b247b467449327",
+          "name": "Running shoes",
+          "quantity": 1,
+          "price": 530,
+          "tax": 15,
+          "discount": 0,
+          "total": 609.5,
+          "_id": "69ba7a1f704a17a507b314aa"
+        }
+      ],
+      "subTotal": 530,
+      "taxTotal": 79.5,
+      "discountTotal": 0,
+      "grandTotal": 609.5,
+      "loyaltyPointsUsed": 0,
+      "paymentDetails": [
+        {
+          "method": "Cash",
+          "amount": 609.5,
+          "_id": "69ba7a1f704a17a507b314ab"
+        }
+      ],
+      "status": "Completed",
+      "paymentStatus": "Paid",
+      "cashier": "69ba3a2d0055492c9bc301ba",
+      "createdAt": "2026-03-18T10:10:39.480Z",
+      "updatedAt": "2026-03-18T10:10:39.480Z",
+      "__v": 0
+    }
+  ],
+  "Customer": [],
+  "Supplier": [],
+  "Inventory": [],
+  "Brand": [
+    {
+      "_id": "69ba7316d8480c7fda61849e",
+      "name": "Nike",
+      "logo": "",
+      "description": "",
+      "storeId": "69ba3a2d0055492c9bc301bc",
+      "createdAt": "2026-03-18T09:40:38.183Z",
+      "updatedAt": "2026-03-18T09:40:38.183Z",
+      "__v": 0
+    }
+  ],
+  "Category": [
+    {
+      "_id": "69ba7300d8480c7fda61846d",
+      "name": "Footwear",
+      "storeId": "69ba3a2d0055492c9bc301bc",
+      "description": "",
+      "createdAt": "2026-03-18T09:40:16.340Z",
+      "updatedAt": "2026-03-18T09:40:16.340Z",
+      "__v": 0
+    }
+  ]
+}
