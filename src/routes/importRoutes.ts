@@ -25,6 +25,6 @@ const router = express.Router();
 
 router.use(protect, tenantHandler);
 
-router.post('/products', protect, authorize('STORE_OWNER', 'ADMIN'), upload.single('file'), importController.importProducts);
+router.post('/products', protect, authorize('STORE_OWNER', 'SUPER_ADMIN'), upload.single('file'), importController.importProducts);
 
 export default router;

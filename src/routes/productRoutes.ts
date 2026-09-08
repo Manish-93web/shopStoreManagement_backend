@@ -33,6 +33,6 @@ router.route('/variants/:id')
     .delete(authorize('STORE_OWNER', 'MANAGER'), deleteVariant);
 
 // Manual Stock Adjustment
-router.patch('/:id/adjust', authorize('STORE_OWNER', 'MANAGER', 'Cashier'), adjustStock);
+router.patch('/:id/adjust', authorize('STORE_OWNER', 'MANAGER', 'CASHIER'), adjustStock);
 
 export default router;

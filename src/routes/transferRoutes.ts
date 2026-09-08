@@ -13,13 +13,13 @@ const router = express.Router();
 router.use(protect, tenantHandler);
 
 router.route('/')
-    .post(authorize('Owner', 'Manager'), createTransfer)
+    .post(authorize('STORE_OWNER', 'MANAGER'), createTransfer)
     .get(getTransfers);
 
 router.route('/:id/send')
-    .put(authorize('Owner', 'Manager'), shipTransfer);
+    .put(authorize('STORE_OWNER', 'MANAGER'), shipTransfer);
 
 router.route('/:id/receive')
-    .put(authorize('Owner', 'Manager'), receiveTransfer);
+    .put(authorize('STORE_OWNER', 'MANAGER'), receiveTransfer);
 
 export default router;

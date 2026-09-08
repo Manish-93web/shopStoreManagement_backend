@@ -8,7 +8,7 @@ const router = express.Router();
 router.use(protect, tenantHandler);
 
 router.get('/', currencyController.getCurrencies);
-router.post('/', authorize('Owner', 'Manager'), currencyController.createCurrency);
-router.put('/:id', authorize('Owner', 'Manager'), currencyController.updateCurrency);
+router.post('/', authorize('STORE_OWNER', 'MANAGER'), currencyController.createCurrency);
+router.put('/:id', authorize('STORE_OWNER', 'MANAGER'), currencyController.updateCurrency);
 
 export default router;

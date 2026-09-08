@@ -9,10 +9,10 @@ router.use(protect, tenantHandler);
 
 router.route('/')
     .get(getSuppliers)
-    .post(authorize('Owner', 'Manager'), createSupplier);
+    .post(authorize('STORE_OWNER', 'MANAGER'), createSupplier);
 
 router.route('/:id')
-    .put(authorize('Owner', 'Manager'), updateSupplier)
-    .delete(authorize('Owner'), deleteSupplier);
+    .put(authorize('STORE_OWNER', 'MANAGER'), updateSupplier)
+    .delete(authorize('STORE_OWNER'), deleteSupplier);
 
 export default router;

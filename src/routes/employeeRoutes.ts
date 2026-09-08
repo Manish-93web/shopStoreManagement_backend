@@ -14,7 +14,7 @@ router.route('/')
     .post(authorize('STORE_OWNER', 'MANAGER'), createEmployee);
 
 router.route('/:id')
-    .put(authorize('Owner', 'Manager'), updateEmployee)
-    .delete(authorize('Owner'), deleteEmployee);
+    .put(authorize('STORE_OWNER', 'MANAGER'), updateEmployee)
+    .delete(authorize('STORE_OWNER'), deleteEmployee);
 
 export default router;

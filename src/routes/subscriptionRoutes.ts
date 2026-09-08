@@ -8,7 +8,7 @@ const router = express.Router();
 router.use(protect, tenantHandler);
 
 router.get('/my-plan', subscriptionController.getSubscription);
-router.post('/upgrade', authorize('Owner'), subscriptionController.upgradePlan);
+router.post('/upgrade', authorize('STORE_OWNER'), subscriptionController.upgradePlan);
 
 // Super Admin Only
 router.get('/all-plans', authorize('SUPER_ADMIN'), subscriptionController.getPlans);

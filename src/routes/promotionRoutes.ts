@@ -12,9 +12,9 @@ router.post('/validate', promotionController.validate);
 router.post('/auto', promotionController.getAutoPromotions);
 
 // Management
-router.get('/coupons', authorize('Owner', 'Manager'), promotionController.getCoupons);
-router.post('/coupons', authorize('Owner', 'Manager'), promotionController.createCoupon);
-router.get('/rules', authorize('Owner', 'Manager'), promotionController.getRules);
-router.post('/rules', authorize('Owner', 'Manager'), promotionController.createRule);
+router.get('/coupons', authorize('STORE_OWNER', 'MANAGER'), promotionController.getCoupons);
+router.post('/coupons', authorize('STORE_OWNER', 'MANAGER'), promotionController.createCoupon);
+router.get('/rules', authorize('STORE_OWNER', 'MANAGER'), promotionController.getRules);
+router.post('/rules', authorize('STORE_OWNER', 'MANAGER'), promotionController.createRule);
 
 export default router;

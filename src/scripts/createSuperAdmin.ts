@@ -1,14 +1,9 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import dns from 'dns';
 import User, { UserRole } from '../models/User.js';
 
 
 dotenv.config();
-
-// The local network's DNS resolver can't resolve mongodb+srv SRV records,
-// so point Node at public DNS servers that can.
-dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 async function createSuperAdmin() {
     try {

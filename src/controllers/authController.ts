@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import User, { UserRole } from '../models/User.js';
 import Store from '../models/Store.js';
+import Plan from '../models/Plan.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt.js';
@@ -29,10 +30,12 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     });
 
     // Create Initial Store
+    const freePlan = await Plan.findOne({ name: 'Free' });
     const store = await Store.create({
         name: storeName,
         shopType,
-        owner: user._id
+        owner: user._id,
+        subscriptionPlan: freePlan?._id
     });
 
     user.stores.push(store._id as any);
