@@ -52,7 +52,7 @@ export const getCategoryAnalytics = asyncHandler(async (req: TenantRequest, res:
     const storeId = req.tenantId;
 
     const orders = await Order.find({ storeId, status: 'Completed' })
-        .populate('items.product');
+        .populate({ path: 'items.product', populate: { path: 'category' } });
 
     const categorySales: Record<string, number> = {};
 
@@ -60,7 +60,9 @@ export const getCategoryAnalytics = asyncHandler(async (req: TenantRequest, res:
         order.items.forEach((item: any) => {
             const product = item.product;
             if (product) {
-                const catName = typeof product.category === 'object' ? product.category.name : (product.category || 'Uncategorized');
+                const catName = (product.category && typeof product.category === 'object')
+                    ? (product.category.name || 'Uncategorized')
+                    : (product.category || 'Uncategorized');
                 const revenue = item.price * item.quantity;
                 categorySales[catName] = (categorySales[catName] || 0) + revenue;
             }
@@ -175,16 +177,19 @@ export const getCategoryGrowth = asyncHandler(async (req: TenantRequest, res: Re
     const currentMonthStart = now.startOf('month').toDate();
     const lastMonthStart = now.subtract(1, 'month').startOf('month').toDate();
 
+    const productPopulate = { path: 'items.product', populate: { path: 'category' } };
     const [currentOrders, lastOrders] = await Promise.all([
-        Order.find({ storeId, createdAt: { $gte: currentMonthStart }, status: 'Completed' }).populate('items.product'),
-        Order.find({ storeId, createdAt: { $gte: lastMonthStart, $lt: currentMonthStart }, status: 'Completed' }).populate('items.product')
+        Order.find({ storeId, createdAt: { $gte: currentMonthStart }, status: 'Completed' }).populate(productPopulate),
+        Order.find({ storeId, createdAt: { $gte: lastMonthStart, $lt: currentMonthStart }, status: 'Completed' }).populate(productPopulate)
     ]);
 
     const calculateCatSales = (orders: any[]) => {
         const sales: Record<string, number> = {};
         orders.forEach(o => o.items.forEach((i: any) => {
             if (i.product) {
-                const cat = typeof i.product.category === 'object' ? i.product.category.name : (i.product.category || 'Uncategorized');
+                const cat = (i.product.category && typeof i.product.category === 'object')
+                    ? (i.product.category.name || 'Uncategorized')
+                    : (i.product.category || 'Uncategorized');
                 sales[cat] = (sales[cat] || 0) + i.total;
             }
         }));

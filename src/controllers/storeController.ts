@@ -66,6 +66,8 @@ export const createStore = asyncHandler(async (req: any, res: Response) => {
         timezone: timezone || 'Asia/Kolkata'
     });
 
+    await User.findByIdAndUpdate(req.user.id, { $addToSet: { stores: store._id } });
+
     res.status(201).json(new ApiResponse(201, store, "Store created successfully"));
 });
 

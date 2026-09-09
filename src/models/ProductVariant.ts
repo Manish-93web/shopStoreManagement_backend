@@ -4,7 +4,7 @@ export interface IProductVariant extends Document {
     productId: mongoose.Types.ObjectId;
     name: string; // e.g., "Size: L, Color: Red"
     sku: string;
-    barcode: string;
+    barcode?: string;
     price?: number; // Override parent price
     costPrice?: number; // Override parent cost price
     images: string[];
@@ -19,7 +19,7 @@ const ProductVariantSchema: Schema = new Schema({
     productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
     name: { type: String, required: true },
     sku: { type: String, required: true, unique: true },
-    barcode: { type: String, required: true, unique: true },
+    barcode: { type: String, unique: true, sparse: true },
     price: { type: Number },
     costPrice: { type: Number },
     images: [{ type: String }],

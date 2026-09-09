@@ -42,6 +42,9 @@ export const createVariant = asyncHandler(async (req: TenantRequest, res: Respon
         productId,
         storeId: req.tenantId
     };
+    if (!variantData.barcode) {
+        delete variantData.barcode;
+    }
 
     const variant = await ProductVariant.create(variantData);
 
@@ -63,7 +66,10 @@ export const createVariant = asyncHandler(async (req: TenantRequest, res: Respon
 // @route   PUT /api/v1/products/variants/:id
 export const updateVariant = asyncHandler(async (req: TenantRequest, res: Response) => {
     const { stock, initialStock, ...updateData } = req.body;
-    
+    if (!updateData.barcode) {
+        delete updateData.barcode;
+    }
+
     const variant = await ProductVariant.findOneAndUpdate(
         { _id: req.params.id, storeId: req.tenantId },
         updateData,
