@@ -1,5 +1,5 @@
 import express from 'express';
-import { getWebhooks, createWebhook, updateWebhook, deleteWebhook, getWebhookLogs } from '../controllers/webhookController.js';
+import { getWebhooks, createWebhook, updateWebhook, deleteWebhook, getWebhookLogs, } from '../controllers/webhookController.js';
 import { protect } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
 const router = express.Router();
@@ -10,11 +10,7 @@ const router = express.Router();
 // Outgoing Webhooks CRUD (requires authentication and tenant context)
 router.use(protect);
 router.use(tenantHandler);
-router.route('/')
-    .get(getWebhooks)
-    .post(createWebhook);
-router.route('/:id')
-    .put(updateWebhook)
-    .delete(deleteWebhook);
+router.route('/').get(getWebhooks).post(createWebhook);
+router.route('/:id').put(updateWebhook).delete(deleteWebhook);
 router.get('/:id/logs', getWebhookLogs);
 export default router;

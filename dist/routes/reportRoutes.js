@@ -2,7 +2,7 @@ import express from 'express';
 import { protect } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
 import { checkTrialExpiry } from '../middleware/usageLimits.js';
-import { getSalesReport, getTopSellingProducts, getLowStockReport, getProfitReport, getTaxReport, getInventoryReport, getCustomerReport, getRevenueReport, getTaxComplianceReport, getSalesAuditTrail, getInventoryAuditReport, queueReport, exportReport } from '../controllers/reportController.js';
+import { getSalesReport, getTopSellingProducts, getLowStockReport, getProfitReport, getTaxReport, getInventoryReport, getCustomerReport, getRevenueReport, getTaxComplianceReport, getSalesAuditTrail, getInventoryAuditReport, queueReport, exportReport, } from '../controllers/reportController.js';
 const router = express.Router();
 router.use(protect, tenantHandler, checkTrialExpiry);
 router.get('/sales', getSalesReport);

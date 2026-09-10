@@ -6,7 +6,7 @@ export const sendEmail = async (options) => {
         const user = process.env.SMTP_USER;
         const pass = process.env.SMTP_PASS;
         if (!host || !user || !pass) {
-            console.log("-----------------------------------------");
+            console.log('-----------------------------------------');
             console.log(`[EMAIL NOT CONFIGURED] Set SMTP_HOST/SMTP_USER/SMTP_PASS to send real email.`);
             console.log(`[EMAIL] To: ${options.to}`);
             console.log(`[EMAIL] Subject: ${options.subject}`);
@@ -14,7 +14,7 @@ export const sendEmail = async (options) => {
                 console.log(`[EMAIL] Template: ${options.templateName}`);
             }
             console.log(`[EMAIL] Body length: ${options.html.length} chars`);
-            console.log("-----------------------------------------");
+            console.log('-----------------------------------------');
             return false;
         }
         if (!transporter) {
@@ -33,7 +33,7 @@ export const sendEmail = async (options) => {
         return true;
     }
     catch (error) {
-        console.error("Email Sending Failed:", error);
+        console.error('Email Sending Failed:', error);
         return false;
     }
 };

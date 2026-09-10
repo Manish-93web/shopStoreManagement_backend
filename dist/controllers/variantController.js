@@ -9,20 +9,20 @@ import { bumpCacheVersion } from '../config/redis.js';
 export const getVariants = asyncHandler(async (req, res) => {
     const variants = await ProductVariant.find({
         productId: req.params.productId,
-        storeId: req.tenantId
+        storeId: req.tenantId,
     }).lean();
     // Fetch inventory for each variant
-    const variantIds = variants.map(v => v._id);
+    const variantIds = variants.map((v) => v._id);
     const inventories = await Inventory.find({
         variant: { $in: variantIds },
-        store: req.tenantId
+        store: req.tenantId,
     });
     // Merge stock into variants
-    const variantsWithStock = variants.map(v => {
-        const inv = inventories.find(i => i.variant?.toString() === v._id.toString());
+    const variantsWithStock = variants.map((v) => {
+        const inv = inventories.find((i) => i.variant?.toString() === v._id.toString());
         return {
             ...v,
-            stock: inv ? inv.quantity : 0
+            stock: inv ? inv.quantity : 0,
         };
     });
     res.status(200).json(new ApiResponse(200, variantsWithStock));
@@ -34,7 +34,7 @@ export const createVariant = asyncHandler(async (req, res) => {
     const variantData = {
         ...req.body,
         productId,
-        storeId: req.tenantId
+        storeId: req.tenantId,
     };
     if (!variantData.barcode) {
         delete variantData.barcode;
@@ -45,12 +45,12 @@ export const createVariant = asyncHandler(async (req, res) => {
         product: productId,
         variant: variant._id,
         store: req.tenantId,
-        quantity: req.body.initialStock || 0
+        quantity: req.body.initialStock || 0,
     });
     // Mark parent product as having variants
     await Product.findByIdAndUpdate(productId, { hasVariants: true });
     await bumpCacheVersion(req.tenantId.toString());
-    res.status(201).json(new ApiResponse(201, variant, "Variant created successfully"));
+    res.status(201).json(new ApiResponse(201, variant, 'Variant created successfully'));
 });
 // @desc    Update a variant
 // @route   PUT /api/v1/products/variants/:id
@@ -59,23 +59,25 @@ export const updateVariant = asyncHandler(async (req, res) => {
     if (!updateData.barcode) {
         delete updateData.barcode;
     }
-    const variant = await ProductVariant.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, updateData, { returnDocument: 'after' });
+    const variant = await ProductVariant.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, updateData, {
+        returnDocument: 'after',
+    });
     if (!variant)
-        return res.status(404).json(new ApiResponse(404, null, "Variant not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Variant not found'));
     // Update inventory if stock/initialStock provided
     const newStock = stock !== undefined ? stock : initialStock;
     if (newStock !== undefined) {
         await Inventory.findOneAndUpdate({ variant: variant._id, store: req.tenantId }, { $set: { quantity: newStock } }, { upsert: true, returnDocument: 'after' });
     }
     await bumpCacheVersion(req.tenantId.toString());
-    res.status(200).json(new ApiResponse(200, variant, "Variant updated successfully"));
+    res.status(200).json(new ApiResponse(200, variant, 'Variant updated successfully'));
 });
 // @desc    Delete a variant
 // @route   DELETE /api/v1/products/variants/:id
 export const deleteVariant = asyncHandler(async (req, res) => {
     const variant = await ProductVariant.findOneAndDelete({ _id: req.params.id, storeId: req.tenantId });
     if (!variant)
-        return res.status(404).json(new ApiResponse(404, null, "Variant not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Variant not found'));
     // Cleanup inventory
     await Inventory.deleteMany({ variant: req.params.id });
     // Check if any variants left
@@ -84,5 +86,5 @@ export const deleteVariant = asyncHandler(async (req, res) => {
         await Product.findByIdAndUpdate(variant.productId, { hasVariants: false });
     }
     await bumpCacheVersion(req.tenantId.toString());
-    res.status(200).json(new ApiResponse(200, null, "Variant deleted successfully"));
+    res.status(200).json(new ApiResponse(200, null, 'Variant deleted successfully'));
 });

@@ -9,14 +9,14 @@ export const sendWhatsApp = async (options) => {
         const authToken = process.env.TWILIO_AUTH_TOKEN;
         const fromNumber = process.env.TWILIO_WHATSAPP_NUMBER;
         if (!accountSid || !authToken || !fromNumber) {
-            console.log("-----------------------------------------");
+            console.log('-----------------------------------------');
             console.log(`[WHATSAPP NOT CONFIGURED] Set TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_WHATSAPP_NUMBER to send real WhatsApp messages.`);
             console.log(`[WHATSAPP] To: ${options.to}`);
             if (options.templateName) {
                 console.log(`[WHATSAPP] Template: ${options.templateName}`);
             }
             console.log(`[WHATSAPP] Message: ${options.body}`);
-            console.log("-----------------------------------------");
+            console.log('-----------------------------------------');
             return false;
         }
         if (!client) {
@@ -25,13 +25,13 @@ export const sendWhatsApp = async (options) => {
         const message = await client.messages.create({
             body: options.body,
             from: asWhatsappAddress(fromNumber),
-            to: asWhatsappAddress(options.to)
+            to: asWhatsappAddress(options.to),
         });
         console.log(`[WHATSAPP] Sent successfully to ${options.to} (SID: ${message.sid})`);
         return true;
     }
     catch (error) {
-        console.error("WhatsApp Sending Failed:", error);
+        console.error('WhatsApp Sending Failed:', error);
         return false;
     }
 };

@@ -17,7 +17,7 @@ export const returnController = {
             // 1. Fetch original order
             const originalOrder = await Order.findById(originalOrderId);
             if (!originalOrder)
-                throw new Error("Original order not found");
+                throw new Error('Original order not found');
             // 2. Generate Return Number
             const returnNumber = `RET-${Date.now()}`;
             // 3. Create Return Order
@@ -27,13 +27,13 @@ export const returnController = {
                 storeId,
                 customer: originalOrder.customer,
                 items,
-                subTotal: items.reduce((acc, item) => acc + (item.price * item.quantity), 0),
-                taxTotal: items.reduce((acc, item) => acc + (item.tax * item.quantity), 0),
-                grandTotal: items.reduce((acc, item) => acc + ((item.price + item.tax) * item.quantity), 0),
+                subTotal: items.reduce((acc, item) => acc + item.price * item.quantity, 0),
+                taxTotal: items.reduce((acc, item) => acc + item.tax * item.quantity, 0),
+                grandTotal: items.reduce((acc, item) => acc + (item.price + item.tax) * item.quantity, 0),
                 refundAmount,
                 status: 'Received',
                 receivedBy: req.user?._id,
-                notes
+                notes,
             });
             await returnOrder.save({ session });
             // 4. Update Inventory (Restock)
@@ -52,7 +52,7 @@ export const returnController = {
                     amount: refundAmount,
                     method: refundMethod || 'Cash',
                     status: 'Completed',
-                    performedBy: req.user?._id
+                    performedBy: req.user?._id,
                 });
                 await refund.save({ session });
                 // Update Wallet if applicable
@@ -64,9 +64,9 @@ export const returnController = {
                                 type: 'CREDIT',
                                 amount: refundAmount,
                                 reason: `Refund for ${originalOrder.orderNumber}`,
-                                date: new Date()
-                            }
-                        }
+                                date: new Date(),
+                            },
+                        },
                     }, { session, upsert: true });
                     // Update legacy loyalty field if needed (often used for simple balance display)
                     await Customer.findByIdAndUpdate(originalOrder.customer, { $inc: { walletBalance: refundAmount } }, { session });
@@ -81,7 +81,7 @@ export const returnController = {
                 emitToStore(storeId.toString(), 'inventory-update', {
                     productId: item.product,
                     variantId: item.variant,
-                    newQuantity: inv?.quantity
+                    newQuantity: inv?.quantity,
                 });
             }
             res.status(201).json({ success: true, data: returnOrder });
@@ -105,5 +105,5 @@ export const returnController = {
         catch (error) {
             res.status(500).json({ success: false, message: error.message });
         }
-    }
+    },
 };

@@ -11,7 +11,7 @@ export const inventoryDetailController = {
         const query = {
             storeId: req.tenantId,
             product: productId,
-            status: 'Active'
+            status: 'Active',
         };
         if (variantId)
             query.variant = variantId;
@@ -21,9 +21,11 @@ export const inventoryDetailController = {
     // @desc    Record a new batch for stock on hand (manual entry, or called
     //          from PO receiving when the received items include batch info)
     createBatch: asyncHandler(async (req, res) => {
-        const { product, variant, batchNumber, quantity, costPrice, sellingPrice, manufacturingDate, expiryDate, supplier, purchaseOrder } = req.body;
+        const { product, variant, batchNumber, quantity, costPrice, sellingPrice, manufacturingDate, expiryDate, supplier, purchaseOrder, } = req.body;
         if (!product || !batchNumber || quantity === undefined || costPrice === undefined) {
-            return res.status(400).json(new ApiResponse(400, null, "product, batchNumber, quantity, and costPrice are required"));
+            return res
+                .status(400)
+                .json(new ApiResponse(400, null, 'product, batchNumber, quantity, and costPrice are required'));
         }
         const batch = await InventoryBatch.create({
             batchNumber,
@@ -39,7 +41,7 @@ export const inventoryDetailController = {
             manufacturingDate: manufacturingDate || undefined,
             expiryDate: expiryDate || undefined,
         });
-        res.status(201).json(new ApiResponse(201, batch, "Batch recorded"));
+        res.status(201).json(new ApiResponse(201, batch, 'Batch recorded'));
     }),
     // @desc    Get serial numbers for a product
     getSerials: asyncHandler(async (req, res) => {
@@ -47,7 +49,7 @@ export const inventoryDetailController = {
         const query = {
             storeId: req.tenantId,
             product: productId,
-            status: 'In Stock'
+            status: 'In Stock',
         };
         if (variantId)
             query.variant = variantId;
@@ -61,7 +63,9 @@ export const inventoryDetailController = {
         const { product, variant, batch, warrantyExpiry } = req.body;
         const serialNumbers = req.body.serialNumbers || (req.body.serialNumber ? [req.body.serialNumber] : []);
         if (!product || serialNumbers.length === 0) {
-            return res.status(400).json(new ApiResponse(400, null, "product and at least one serial number are required"));
+            return res
+                .status(400)
+                .json(new ApiResponse(400, null, 'product and at least one serial number are required'));
         }
         const docs = serialNumbers.map((serialNumber) => ({
             serialNumber,
@@ -80,7 +84,9 @@ export const inventoryDetailController = {
             // insertMany with ordered:false still throws on any failure (e.g. duplicate
             // serial) after inserting the valid ones — report what succeeded.
             if (err.insertedDocs?.length) {
-                return res.status(207).json(new ApiResponse(207, err.insertedDocs, `${err.insertedDocs.length} recorded, some were duplicates and skipped`));
+                return res
+                    .status(207)
+                    .json(new ApiResponse(207, err.insertedDocs, `${err.insertedDocs.length} recorded, some were duplicates and skipped`));
             }
             throw err;
         }
@@ -90,11 +96,11 @@ export const inventoryDetailController = {
         const { serialNumber, status, notes } = req.body;
         const serial = await ProductSerial.findOneAndUpdate({ serialNumber, storeId: req.tenantId }, {
             $set: { status },
-            $push: { history: { action: `Status changed to ${status}`, notes, date: new Date() } }
+            $push: { history: { action: `Status changed to ${status}`, notes, date: new Date() } },
         }, { returnDocument: 'after' });
         if (!serial)
-            return res.status(404).json(new ApiResponse(404, null, "Serial not found"));
-        res.status(200).json(new ApiResponse(200, serial, "Serial status updated"));
+            return res.status(404).json(new ApiResponse(404, null, 'Serial not found'));
+        res.status(200).json(new ApiResponse(200, serial, 'Serial status updated'));
     }),
     // @desc    Get Stock History Log
     getStockHistory: asyncHandler(async (req, res) => {
@@ -114,8 +120,8 @@ export const inventoryDetailController = {
         // Find inventory where quantity <= lowStockThreshold
         const lowStockItems = await Inventory.find({
             store: req.tenantId,
-            $expr: { $lte: ['$quantity', '$lowStockThreshold'] }
+            $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
         }).populate('product', 'name sku image barcode');
         res.status(200).json(new ApiResponse(200, lowStockItems));
-    })
+    }),
 };

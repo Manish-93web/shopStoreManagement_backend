@@ -10,13 +10,15 @@ export const validateDiscount = asyncHandler(async (req, res) => {
         storeId: req.tenantId,
         isActive: true,
         startDate: { $lte: new Date() },
-        endDate: { $gte: new Date() }
+        endDate: { $gte: new Date() },
     });
     if (!discount) {
-        return res.status(404).json(new ApiResponse(404, null, "Invalid or expired coupon"));
+        return res.status(404).json(new ApiResponse(404, null, 'Invalid or expired coupon'));
     }
     if (amount < (discount.minPurchase || 0)) {
-        return res.status(400).json(new ApiResponse(400, null, `Minimum purchase of ₹${discount.minPurchase} required`));
+        return res
+            .status(400)
+            .json(new ApiResponse(400, null, `Minimum purchase of ₹${discount.minPurchase} required`));
     }
     let discountAmount;
     if (discount.type === 'Percentage') {
@@ -31,8 +33,8 @@ export const validateDiscount = asyncHandler(async (req, res) => {
     res.status(200).json(new ApiResponse(200, {
         discountAmount,
         code: discount.code,
-        type: discount.type
-    }, "Coupon applied"));
+        type: discount.type,
+    }, 'Coupon applied'));
 });
 // @desc    Create a new discount
 // @route   POST /api/discounts

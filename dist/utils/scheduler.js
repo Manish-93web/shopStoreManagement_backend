@@ -20,9 +20,9 @@ export const initReportScheduler = () => {
                         type: 'sales',
                         filters: {
                             startDate: new Date(new Date().setDate(new Date().getDate() - 1)).toISOString(),
-                            endDate: new Date().toISOString()
+                            endDate: new Date().toISOString(),
                         },
-                        userId: owner._id.toString()
+                        userId: owner._id.toString(),
                     });
                 }
             }

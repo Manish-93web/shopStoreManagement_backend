@@ -16,17 +16,17 @@ export const createPurchaseOrder = asyncHandler(async (req, res) => {
         ...req.body,
         poNumber: `PO-${Date.now()}`,
         storeId: req.tenantId,
-        createdBy: req.user._id
+        createdBy: req.user._id,
     };
     const po = await PurchaseOrder.create(poData);
-    res.status(201).json(new ApiResponse(201, po, "Purchase Order created"));
+    res.status(201).json(new ApiResponse(201, po, 'Purchase Order created'));
 });
 // @desc    Approve a Purchase Order
 // @route   PUT /api/purchase-orders/:id/approve
 export const approvePurchaseOrder = asyncHandler(async (req, res) => {
     const po = await PurchaseOrder.findOne({ _id: req.params.id, storeId: req.tenantId });
     if (!po) {
-        return res.status(404).json(new ApiResponse(404, null, "Purchase Order not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Purchase Order not found'));
     }
     if (po.status !== 'Draft' && po.status !== 'Sent') {
         return res.status(400).json(new ApiResponse(400, null, `Cannot approve PO with status: ${po.status}`));
@@ -38,11 +38,11 @@ export const approvePurchaseOrder = asyncHandler(async (req, res) => {
     await notificationService.send({
         recipientId: po.createdBy.toString(),
         storeId: req.tenantId.toString(),
-        title: "Purchase Order Approved",
+        title: 'Purchase Order Approved',
         message: `Your Purchase Order ${po.poNumber} has been approved.`,
-        type: 'SUCCESS'
+        type: 'SUCCESS',
     });
-    res.status(200).json(new ApiResponse(200, po, "Purchase Order approved"));
+    res.status(200).json(new ApiResponse(200, po, 'Purchase Order approved'));
 });
 // @desc    Receive inventory from an approved PO — supports partial/short receiving.
 //          Body: { items?: [{ productId, variantId?, receivedQty }] } — if omitted,
@@ -52,7 +52,7 @@ export const approvePurchaseOrder = asyncHandler(async (req, res) => {
 export const receivePurchaseOrder = asyncHandler(async (req, res) => {
     const po = await PurchaseOrder.findOne({ _id: req.params.id, storeId: req.tenantId });
     if (!po || po.status === 'Received' || po.status === 'Cancelled') {
-        return res.status(400).json(new ApiResponse(400, null, "Invalid PO or already fully received"));
+        return res.status(400).json(new ApiResponse(400, null, 'Invalid PO or already fully received'));
     }
     const receivedInput = req.body.items;
     // Update inventory for each item
@@ -81,7 +81,7 @@ export const receivePurchaseOrder = asyncHandler(async (req, res) => {
         emitToStore(req.tenantId.toString(), 'inventory-update', {
             productId: item.product,
             variantId: item.variant,
-            newQuantity: inv?.quantity
+            newQuantity: inv?.quantity,
         });
     }
     await bumpCacheVersion(req.tenantId.toString());
@@ -97,14 +97,14 @@ export const receivePurchaseOrder = asyncHandler(async (req, res) => {
         await notificationService.send({
             recipientId: store.owner.toString(),
             storeId: req.tenantId.toString(),
-            title: fullyReceived ? "Inventory Restocked (PO Received)" : "Partial Delivery Received",
+            title: fullyReceived ? 'Inventory Restocked (PO Received)' : 'Partial Delivery Received',
             message: fullyReceived
                 ? `PO ${po.poNumber} has been fully received. Stocks updated.`
                 : `PO ${po.poNumber} was partially received. Stocks updated for the items delivered.`,
-            type: 'SUCCESS'
+            type: 'SUCCESS',
         });
     }
-    res.status(200).json(new ApiResponse(200, po, fullyReceived ? "Purchase Order fully received" : "Purchase Order partially received"));
+    res.status(200).json(new ApiResponse(200, po, fullyReceived ? 'Purchase Order fully received' : 'Purchase Order partially received'));
 });
 // @desc    Get all purchase orders
 // @route   GET /api/purchase-orders
@@ -119,7 +119,7 @@ export const getPurchaseOrders = asyncHandler(async (req, res) => {
 export const generatePurchaseOrderInvoice = asyncHandler(async (req, res) => {
     const po = await PurchaseOrder.findOne({ _id: req.params.id, storeId: req.tenantId }).populate('supplier');
     if (!po) {
-        return res.status(404).json(new ApiResponse(404, null, "Purchase Order not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Purchase Order not found'));
     }
     const store = await Store.findById(req.tenantId);
     const supplier = po.supplier;
@@ -128,7 +128,9 @@ export const generatePurchaseOrderInvoice = asyncHandler(async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename=${po.poNumber}.pdf`);
     doc.pipe(res);
     doc.fontSize(20).text(store?.name || 'Store360', { align: 'left' });
-    doc.fontSize(9).fillColor('#555').text([store?.address, store?.phone, store?.email, store?.gstin ? `GSTIN: ${store.gstin}` : null]
+    doc.fontSize(9)
+        .fillColor('#555')
+        .text([store?.address, store?.phone, store?.email, store?.gstin ? `GSTIN: ${store.gstin}` : null]
         .filter(Boolean)
         .join(' | '));
     doc.moveDown(1.5);
@@ -157,7 +159,10 @@ export const generatePurchaseOrderInvoice = asyncHandler(async (req, res) => {
     doc.text('Received', cols.received, tableTop);
     doc.text('Cost', cols.cost, tableTop);
     doc.text('Total', cols.total, tableTop);
-    doc.moveTo(50, tableTop + 15).lineTo(545, tableTop + 15).strokeColor('#ccc').stroke();
+    doc.moveTo(50, tableTop + 15)
+        .lineTo(545, tableTop + 15)
+        .strokeColor('#ccc')
+        .stroke();
     let y = tableTop + 22;
     po.items.forEach((item) => {
         doc.fillColor('#333').fontSize(9);
@@ -168,9 +173,14 @@ export const generatePurchaseOrderInvoice = asyncHandler(async (req, res) => {
         doc.text(item.total.toFixed(2), cols.total, y);
         y += 20;
     });
-    doc.moveTo(50, y + 5).lineTo(545, y + 5).strokeColor('#ccc').stroke();
+    doc.moveTo(50, y + 5)
+        .lineTo(545, y + 5)
+        .strokeColor('#ccc')
+        .stroke();
     y += 15;
-    doc.fillColor('#000').fontSize(10).text(`Subtotal: ${po.subTotal.toFixed(2)}`, cols.total - 60, y, { align: 'right' });
+    doc.fillColor('#000')
+        .fontSize(10)
+        .text(`Subtotal: ${po.subTotal.toFixed(2)}`, cols.total - 60, y, { align: 'right' });
     y += 15;
     doc.text(`Tax: ${po.taxTotal.toFixed(2)}`, cols.total - 60, y, { align: 'right' });
     y += 15;

@@ -19,6 +19,7 @@ import exchangeRoutes from './routes/exchangeRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import supplierRoutes from './routes/supplierRoutes.js';
 import supplierPaymentRoutes from './routes/supplierPaymentRoutes.js';
+import supplierContactRoutes from './routes/supplierContactRoutes.js';
 import brandRoutes from './routes/brandRoutes.js';
 import taxRuleRoutes from './routes/taxRuleRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
@@ -156,6 +157,7 @@ v1.use('/stores', storeRoutes);
 // Inventory & Supply
 v1.use('/suppliers', supplierRoutes);
 v1.use('/supplier-payments', supplierPaymentRoutes);
+v1.use('/supplier-contacts', supplierContactRoutes);
 v1.use('/transfers', transferRoutes);
 
 // POS Enhancements

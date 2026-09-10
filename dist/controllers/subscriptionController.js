@@ -21,7 +21,7 @@ export const subscriptionController = {
     getSubscription: asyncHandler(async (req, res) => {
         const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
         if (!store)
-            return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+            return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
         res.status(200).json(new ApiResponse(200, store));
     }),
     // @desc    Get all available plans
@@ -32,21 +32,21 @@ export const subscriptionController = {
     // @desc    Create a new plan (Super Admin)
     createPlan: asyncHandler(async (req, res) => {
         const plan = await Plan.create(req.body);
-        res.status(201).json(new ApiResponse(201, plan, "Plan created successfully"));
+        res.status(201).json(new ApiResponse(201, plan, 'Plan created successfully'));
     }),
     // @desc    Update an existing plan (Super Admin)
     updatePlan: asyncHandler(async (req, res) => {
         const plan = await Plan.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
         if (!plan)
-            return res.status(404).json(new ApiResponse(404, null, "Plan not found"));
-        res.status(200).json(new ApiResponse(200, plan, "Plan updated successfully"));
+            return res.status(404).json(new ApiResponse(404, null, 'Plan not found'));
+        res.status(200).json(new ApiResponse(200, plan, 'Plan updated successfully'));
     }),
     // @desc    Delete a plan (Super Admin)
     deletePlan: asyncHandler(async (req, res) => {
         const plan = await Plan.findByIdAndDelete(req.params.id);
         if (!plan)
-            return res.status(404).json(new ApiResponse(404, null, "Plan not found"));
-        res.status(200).json(new ApiResponse(200, null, "Plan deleted successfully"));
+            return res.status(404).json(new ApiResponse(404, null, 'Plan not found'));
+        res.status(200).json(new ApiResponse(200, null, 'Plan deleted successfully'));
     }),
     // @desc    Switch to a free (₹0) plan directly — paid plans must go through
     //          POST /subscriptions/checkout instead; only a paid webhook can activate them.
@@ -54,18 +54,20 @@ export const subscriptionController = {
         const { planId } = req.body;
         const plan = await Plan.findById(planId);
         if (!plan)
-            return res.status(404).json(new ApiResponse(404, null, "Plan not found"));
+            return res.status(404).json(new ApiResponse(404, null, 'Plan not found'));
         if (plan.price > 0) {
-            return res.status(400).json(new ApiResponse(400, null, "This is a paid plan — use the checkout flow to activate it."));
+            return res
+                .status(400)
+                .json(new ApiResponse(400, null, 'This is a paid plan — use the checkout flow to activate it.'));
         }
         const store = await Store.findByIdAndUpdate(req.tenantId, {
             $set: {
                 subscriptionPlan: plan._id,
                 subscriptionStatus: 'Active',
-                lastBillingDate: new Date()
-            }
+                lastBillingDate: new Date(),
+            },
         }, { returnDocument: 'after' });
-        res.status(200).json(new ApiResponse(200, store, "Subscription updated"));
+        res.status(200).json(new ApiResponse(200, store, 'Subscription updated'));
     }),
     // @desc    Start checkout for a paid plan — creates a real Razorpay Order when the
     //          gateway is configured, plus a Sent invoice + Pending payment record.
@@ -75,17 +77,21 @@ export const subscriptionController = {
         const { planId } = req.body;
         const plan = await Plan.findById(planId);
         if (!plan)
-            return res.status(404).json(new ApiResponse(404, null, "Plan not found"));
+            return res.status(404).json(new ApiResponse(404, null, 'Plan not found'));
         if (plan.price === 0) {
-            return res.status(400).json(new ApiResponse(400, null, "This plan is free — use the upgrade endpoint instead."));
+            return res
+                .status(400)
+                .json(new ApiResponse(400, null, 'This plan is free — use the upgrade endpoint instead.'));
         }
         const razorpay = getRazorpayClient();
         if (!razorpay) {
-            return res.status(503).json(new ApiResponse(503, null, "Payment gateway is not configured on this server."));
+            return res
+                .status(503)
+                .json(new ApiResponse(503, null, 'Payment gateway is not configured on this server.'));
         }
         const store = await Store.findById(req.tenantId);
         if (!store)
-            return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+            return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
         const now = new Date();
         const billingEnd = new Date(now);
         billingEnd.setDate(billingEnd.getDate() + (plan.billingCycle === 'yearly' ? 365 : 30));
@@ -100,7 +106,7 @@ export const subscriptionController = {
             currency: 'INR',
             status: 'Sent',
             dueDate: now,
-            billingPeriod: { start: now, end: billingEnd }
+            billingPeriod: { start: now, end: billingEnd },
         });
         let razorpayOrder;
         try {
@@ -108,12 +114,18 @@ export const subscriptionController = {
                 amount: Math.round(plan.price * 100), // paise
                 currency: 'INR',
                 receipt: invoice.invoiceNumber,
-                notes: { storeId: store._id.toString(), planId: plan._id.toString(), invoiceId: invoice._id.toString() }
+                notes: {
+                    storeId: store._id.toString(),
+                    planId: plan._id.toString(),
+                    invoiceId: invoice._id.toString(),
+                },
             });
         }
         catch (err) {
             await SubscriptionInvoice.findByIdAndDelete(invoice._id);
-            return res.status(502).json(new ApiResponse(502, null, `Payment gateway rejected the checkout request: ${err.error?.description || err.message || 'unknown error'}`));
+            return res
+                .status(502)
+                .json(new ApiResponse(502, null, `Payment gateway rejected the checkout request: ${err.error?.description || err.message || 'unknown error'}`));
         }
         await SubscriptionPayment.create({
             transactionId: razorpayOrder.id,
@@ -123,7 +135,7 @@ export const subscriptionController = {
             currency: 'INR',
             gateway: 'Razorpay',
             status: 'Pending',
-            paymentMethod: 'razorpay_checkout'
+            paymentMethod: 'razorpay_checkout',
         });
         res.status(200).json(new ApiResponse(200, {
             razorpayOrderId: razorpayOrder.id,
@@ -131,8 +143,8 @@ export const subscriptionController = {
             currency: razorpayOrder.currency,
             keyId: process.env.RAZORPAY_KEY_ID,
             invoiceId: invoice._id,
-            planName: plan.name
-        }, "Checkout order created"));
+            planName: plan.name,
+        }, 'Checkout order created'));
     }),
     // @desc    Get platform-wide invoices (Super Admin)
     getSystemInvoices: asyncHandler(async (req, res) => {
@@ -147,7 +159,7 @@ export const subscriptionController = {
         res.status(200).json(new ApiResponse(200, {
             invoices,
             total,
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: Math.ceil(total / Number(limit)),
         }));
-    })
+    }),
 };

@@ -6,16 +6,20 @@ const NotificationSchema = new Schema({
     message: { type: String, required: true },
     actionUrl: { type: String },
     isRead: { type: Boolean, default: false },
-    channels: [{
+    channels: [
+        {
             type: String,
             enum: ['In-App', 'Email', 'SMS', 'WhatsApp'],
-            default: ['In-App']
-        }],
-    deliveryStatus: [{
+            default: ['In-App'],
+        },
+    ],
+    deliveryStatus: [
+        {
             channel: { type: String, enum: ['In-App', 'Email', 'SMS', 'WhatsApp'] },
             success: { type: Boolean },
-            _id: false
-        }],
+            _id: false,
+        },
+    ],
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: false },
     metadata: { type: Schema.Types.Mixed },
 }, { timestamps: true });

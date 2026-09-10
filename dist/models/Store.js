@@ -4,18 +4,30 @@ const StoreSchema = new Schema({
     logo: { type: String },
     currency: {
         code: { type: String, default: 'INR' },
-        symbol: { type: String, default: '₹' }
+        symbol: { type: String, default: '₹' },
     },
     status: {
         type: String,
         enum: ['Pending', 'Approved', 'Suspended'],
-        default: 'Pending'
+        default: 'Pending',
     },
     timezone: { type: String, default: 'Asia/Kolkata' },
     shopType: {
         type: String,
-        enum: ['Shoe', 'Clothing', 'Electronics', 'Grocery', 'Cosmetic', 'Medical', 'Furniture', 'Hardware', 'Supermarket', 'Warehouse', 'Other'],
-        default: 'Other'
+        enum: [
+            'Shoe',
+            'Clothing',
+            'Electronics',
+            'Grocery',
+            'Cosmetic',
+            'Medical',
+            'Furniture',
+            'Hardware',
+            'Supermarket',
+            'Warehouse',
+            'Other',
+        ],
+        default: 'Other',
     },
     owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     address: { type: String },
@@ -26,7 +38,11 @@ const StoreSchema = new Schema({
     upiId: { type: String },
     isActive: { type: Boolean, default: true },
     subscriptionPlan: { type: Schema.Types.ObjectId, ref: 'Plan' },
-    subscriptionStatus: { type: String, enum: ['Active', 'Past Due', 'Cancelled', 'Trialing'], default: 'Trialing' },
+    subscriptionStatus: {
+        type: String,
+        enum: ['Active', 'Past Due', 'Cancelled', 'Trialing'],
+        default: 'Trialing',
+    },
     trialEndsAt: { type: Date, default: () => new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) }, // 14-day trial
     featuresEnabled: [{ type: String }],
     currentMonthOrders: { type: Number, default: 0 },

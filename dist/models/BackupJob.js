@@ -7,7 +7,7 @@ const BackupJobSchema = new Schema({
     fileSize: { type: Number },
     storageLocation: { type: String, enum: ['local', 's3'], default: 'local' },
     triggeredBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    error: { type: String }
+    error: { type: String },
 }, { timestamps: true });
 // Index for fast lookup by store
 BackupJobSchema.index({ storeId: 1, createdAt: -1 });

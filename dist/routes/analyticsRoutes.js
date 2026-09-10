@@ -1,7 +1,7 @@
 import express from 'express';
 import { protect } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
-import { getDashboardSummary, getRetentionStats, getCategoryGrowth, getRetentionTrends, getSalesPrediction, getCategoryAnalytics, getSupplierAnalytics } from '../controllers/analyticsController.js';
+import { getDashboardSummary, getRetentionStats, getCategoryGrowth, getRetentionTrends, getSalesPrediction, getCategoryAnalytics, getSupplierAnalytics, } from '../controllers/analyticsController.js';
 import { checkFeatureAccess } from '../middleware/featureAccess.js';
 import { checkTrialExpiry } from '../middleware/usageLimits.js';
 const router = express.Router();

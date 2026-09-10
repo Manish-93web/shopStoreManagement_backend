@@ -14,7 +14,7 @@ export const getTheme = asyncHandler(async (req, res) => {
             textColor: '#f8fafc',
             brandName: 'Store360',
             fontFamily: 'Inter',
-            borderRadius: '0.75rem'
+            borderRadius: '0.75rem',
         }));
     }
     res.status(200).json(new ApiResponse(200, theme));
@@ -23,6 +23,16 @@ export const getTheme = asyncHandler(async (req, res) => {
 // @route   PUT /api/theme
 export const saveTheme = asyncHandler(async (req, res) => {
     const { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius } = req.body;
-    const theme = await ThemeConfig.findOneAndUpdate({ storeId: req.tenantId }, { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius, storeId: req.tenantId }, { upsert: true, returnDocument: 'after', runValidators: true });
+    const theme = await ThemeConfig.findOneAndUpdate({ storeId: req.tenantId }, {
+        primaryColor,
+        accentColor,
+        backgroundColor,
+        textColor,
+        logoUrl,
+        brandName,
+        fontFamily,
+        borderRadius,
+        storeId: req.tenantId,
+    }, { upsert: true, returnDocument: 'after', runValidators: true });
     res.status(200).json(new ApiResponse(200, theme, 'Theme saved successfully'));
 });

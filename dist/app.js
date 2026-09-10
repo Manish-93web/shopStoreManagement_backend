@@ -18,6 +18,7 @@ import exchangeRoutes from './routes/exchangeRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import supplierRoutes from './routes/supplierRoutes.js';
 import supplierPaymentRoutes from './routes/supplierPaymentRoutes.js';
+import supplierContactRoutes from './routes/supplierContactRoutes.js';
 import brandRoutes from './routes/brandRoutes.js';
 import taxRuleRoutes from './routes/taxRuleRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
@@ -46,7 +47,7 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import mongoSanitize from 'express-mongo-sanitize';
 import compression from 'compression';
-import * as Sentry from "@sentry/node";
+import * as Sentry from '@sentry/node';
 import { sentryContextMiddleware } from './config/sentry.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import logger from './utils/logger.js';
@@ -71,7 +72,7 @@ app.use('/report-files', express.static(path.join(__dirname, '../public/reports'
 // (This does mean an XSS hole would be able to steal the token from localStorage,
 // which is why real input sanitization — see middleware/sanitize.ts — matters here.)
 app.use(helmet());
-// Express 5 makes req.query a read-only getter. 
+// Express 5 makes req.query a read-only getter.
 // This middleware makes it writable so express-mongo-sanitize can work.
 app.use((req, _res, next) => {
     const originalQuery = req.query;
@@ -82,7 +83,7 @@ app.use((req, _res, next) => {
             Object.assign(originalQuery, val);
         },
         configurable: true,
-        enumerable: true
+        enumerable: true,
     });
     next();
 });
@@ -113,12 +114,12 @@ const limiter = rateLimit({
     max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
-    message: 'Too many requests from this IP, please try again after 15 minutes'
+    message: 'Too many requests from this IP, please try again after 15 minutes',
 });
 const authLimiter = rateLimit({
     windowMs: 60 * 60 * 1000, // 1 hour
     max: 20, // 20 attempts per hour
-    message: 'Too many login attempts, please try again after an hour'
+    message: 'Too many login attempts, please try again after an hour',
 });
 app.use('/api/v1', limiter);
 app.use('/api/v1/auth/login', authLimiter);
@@ -138,6 +139,7 @@ v1.use('/stores', storeRoutes);
 // Inventory & Supply
 v1.use('/suppliers', supplierRoutes);
 v1.use('/supplier-payments', supplierPaymentRoutes);
+v1.use('/supplier-contacts', supplierContactRoutes);
 v1.use('/transfers', transferRoutes);
 // POS Enhancements
 v1.use('/discounts', discountRoutes);
@@ -182,7 +184,12 @@ app.get('/health', (_req, res) => {
 });
 // 404 for anything that didn't match a route above
 app.use((req, res) => {
-    res.status(404).json({ statusCode: 404, data: null, message: `Route not found: ${req.method} ${req.originalUrl}`, success: false });
+    res.status(404).json({
+        statusCode: 404,
+        data: null,
+        message: `Route not found: ${req.method} ${req.originalUrl}`,
+        success: false,
+    });
 });
 // Sentry Error Handler (captures the error, then forwards it via next(err))
 Sentry.setupExpressErrorHandler(app);

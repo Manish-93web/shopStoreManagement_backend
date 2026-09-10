@@ -12,7 +12,7 @@ const upload = multer({
         const allowedTypes = [
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'text/csv',
-            'application/vnd.ms-excel'
+            'application/vnd.ms-excel',
         ];
         if (allowedTypes.includes(file.mimetype)) {
             cb(null, true);
@@ -20,7 +20,7 @@ const upload = multer({
         else {
             cb(new Error('Invalid file type. Only Excel and CSV are allowed.'));
         }
-    }
+    },
 });
 const router = express.Router();
 router.use(protect, tenantHandler, checkTrialExpiry);

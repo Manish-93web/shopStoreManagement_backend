@@ -11,7 +11,7 @@ import { sendEmail } from '../utils/emailService.js';
 const APP_URL = process.env.APP_URL || `http://localhost:${process.env.PORT || 5000}`;
 const connection = {
     host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT || '6379')
+    port: parseInt(process.env.REDIS_PORT || '6379'),
 };
 let reportWorker = null;
 if (process.env.SKIP_REDIS !== 'true') {
@@ -25,7 +25,7 @@ if (process.env.SKIP_REDIS !== 'true') {
             status: 'processing',
             format,
             filters,
-            generatedBy: userId
+            generatedBy: userId,
         });
         try {
             const fileName = `report-${type}-${Date.now()}.${format}`;
@@ -41,15 +41,15 @@ if (process.env.SKIP_REDIS !== 'true') {
                     worksheet.columns = [
                         { header: 'Order #', key: 'orderNumber' },
                         { header: 'Total', key: 'grandTotal' },
-                        { header: 'Date', key: 'createdAt' }
+                        { header: 'Date', key: 'createdAt' },
                     ];
-                    orders.forEach(o => worksheet.addRow(o));
+                    orders.forEach((o) => worksheet.addRow(o));
                 }
                 else {
                     const items = await Inventory.find({ store: tenantId }).populate('product');
                     worksheet.columns = [
                         { header: 'Product', key: 'name' },
-                        { header: 'Qty', key: 'quantity' }
+                        { header: 'Qty', key: 'quantity' },
                     ];
                     items.forEach((i) => worksheet.addRow({ name: i.product?.name, quantity: i.quantity }));
                 }
@@ -66,7 +66,7 @@ if (process.env.SKIP_REDIS !== 'true') {
                 doc.moveDown();
                 // ... (similar PDF logic as controller)
                 doc.end();
-                await new Promise(resolve => stream.on('finish', resolve));
+                await new Promise((resolve) => stream.on('finish', resolve));
             }
             // Update report record with success
             reportRecord.status = 'completed';
@@ -78,7 +78,7 @@ if (process.env.SKIP_REDIS !== 'true') {
                 await sendEmail({
                     to: requester.email,
                     subject: `Your ${type} report is ready`,
-                    html: `<p>Your ${type} report (${format.toUpperCase()}) has finished generating.</p><p><a href="${APP_URL}${reportRecord.fileUrl}">Download report</a></p>`
+                    html: `<p>Your ${type} report (${format.toUpperCase()}) has finished generating.</p><p><a href="${APP_URL}${reportRecord.fileUrl}">Download report</a></p>`,
                 });
             }
         }

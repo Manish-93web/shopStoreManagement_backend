@@ -5,7 +5,5 @@ import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { returnController } from '../controllers/returnController.js';
 const router = express.Router();
 router.use(protect, tenantHandler, checkTrialExpiry);
-router.route('/')
-    .get(returnController.getReturns)
-    .post(returnController.createReturn);
+router.route('/').get(returnController.getReturns).post(returnController.createReturn);
 export default router;

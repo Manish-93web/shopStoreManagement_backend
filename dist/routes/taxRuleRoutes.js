@@ -6,10 +6,6 @@ import { checkTrialExpiry } from '../middleware/usageLimits.js';
 const router = express.Router();
 router.use(protect);
 router.use(tenantHandler, checkTrialExpiry);
-router.route('/')
-    .get(getTaxRules)
-    .post(authorize('STORE_OWNER'), createTaxRule);
-router.route('/:id')
-    .put(authorize('STORE_OWNER'), updateTaxRule)
-    .delete(authorize('STORE_OWNER'), deleteTaxRule);
+router.route('/').get(getTaxRules).post(authorize('STORE_OWNER'), createTaxRule);
+router.route('/:id').put(authorize('STORE_OWNER'), updateTaxRule).delete(authorize('STORE_OWNER'), deleteTaxRule);
 export default router;

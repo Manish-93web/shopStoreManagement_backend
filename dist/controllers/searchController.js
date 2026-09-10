@@ -13,12 +13,12 @@ export const globalSearchController = {
         const [products, orders, customers] = await Promise.all([
             Product.find({ storeId, $or: [{ name: searchRegex }, { sku: searchRegex }] }).limit(5),
             Order.find({ storeId, orderNumber: searchRegex }).limit(5),
-            Customer.find({ storeId, $or: [{ name: searchRegex }, { phone: searchRegex }] }).limit(5)
+            Customer.find({ storeId, $or: [{ name: searchRegex }, { phone: searchRegex }] }).limit(5),
         ]);
         res.status(200).json(new ApiResponse(200, {
             products,
             orders,
-            customers
+            customers,
         }));
-    })
+    }),
 };

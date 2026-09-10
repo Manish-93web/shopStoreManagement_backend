@@ -6,10 +6,9 @@ import { checkTrialExpiry } from '../middleware/usageLimits.js';
 const router = express.Router();
 router.use(protect);
 router.use(tenantHandler, checkTrialExpiry);
-router.route('/')
-    .get(getBrands)
-    .post(authorize('STORE_OWNER', 'MANAGER'), createBrand);
-router.route('/:id')
+router.route('/').get(getBrands).post(authorize('STORE_OWNER', 'MANAGER'), createBrand);
+router
+    .route('/:id')
     .put(authorize('STORE_OWNER', 'MANAGER'), updateBrand)
     .delete(authorize('STORE_OWNER'), deleteBrand);
 export default router;

@@ -114,48 +114,51 @@ export const getTaxReport = asyncHandler(async (req: TenantRequest, res: Respons
 // @desc    Get inventory valuation report
 // @route   GET /api/reports/inventory
 export const getInventoryReport = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const inventory = await Inventory.find({ store: req.tenantId }).populate({
-        path: 'product',
-        populate: { path: 'category', select: 'name' },
-    });
+    const cacheKey = `analytics:inventory-report:${req.tenantId}`;
+    const { value: result } = await withCache(cacheKey, 60, async () => {
+        const inventory = await Inventory.find({ store: req.tenantId }).populate({
+            path: 'product',
+            populate: { path: 'category', select: 'name' },
+        });
 
-    const byCategory: Record<string, { category: string; totalValue: number; totalQuantity: number }> = {};
-    let lowStockCount = 0;
-    let outOfStockCount = 0;
+        const byCategory: Record<string, { category: string; totalValue: number; totalQuantity: number }> = {};
+        let lowStockCount = 0;
+        let outOfStockCount = 0;
 
-    const stats = inventory.reduce(
-        (acc, item: any) => {
-            const cost = (item.product?.costPrice || 0) * item.quantity;
-            const value = (item.product?.price || 0) * item.quantity;
-            acc.totalItems += item.quantity;
-            acc.totalCostValue += cost;
-            acc.totalRetailValue += value;
-            acc.potentialProfit += value - cost;
+        const stats = inventory.reduce(
+            (acc, item: any) => {
+                const cost = (item.product?.costPrice || 0) * item.quantity;
+                const value = (item.product?.price || 0) * item.quantity;
+                acc.totalItems += item.quantity;
+                acc.totalCostValue += cost;
+                acc.totalRetailValue += value;
+                acc.potentialProfit += value - cost;
 
-            const categoryName = item.product?.category?.name || 'Uncategorized';
-            if (!byCategory[categoryName]) {
-                byCategory[categoryName] = { category: categoryName, totalValue: 0, totalQuantity: 0 };
-            }
-            byCategory[categoryName].totalValue += value;
-            byCategory[categoryName].totalQuantity += item.quantity;
+                const categoryName = item.product?.category?.name || 'Uncategorized';
+                if (!byCategory[categoryName]) {
+                    byCategory[categoryName] = { category: categoryName, totalValue: 0, totalQuantity: 0 };
+                }
+                byCategory[categoryName].totalValue += value;
+                byCategory[categoryName].totalQuantity += item.quantity;
 
-            if (item.quantity === 0) outOfStockCount++;
-            else if (item.quantity <= (item.lowStockThreshold || 10)) lowStockCount++;
+                if (item.quantity === 0) outOfStockCount++;
+                else if (item.quantity <= (item.lowStockThreshold || 10)) lowStockCount++;
 
-            return acc;
-        },
-        { totalItems: 0, totalCostValue: 0, totalRetailValue: 0, potentialProfit: 0 }
-    );
+                return acc;
+            },
+            { totalItems: 0, totalCostValue: 0, totalRetailValue: 0, potentialProfit: 0 }
+        );
 
-    res.status(200).json(
-        new ApiResponse(200, {
+        return {
             ...stats,
             totalProducts: inventory.length,
             lowStockCount,
             outOfStockCount,
             byCategory: Object.values(byCategory).sort((a, b) => b.totalValue - a.totalValue),
-        })
-    );
+        };
+    });
+
+    res.status(200).json(new ApiResponse(200, result));
 });
 
 // @desc    Get customer insights report

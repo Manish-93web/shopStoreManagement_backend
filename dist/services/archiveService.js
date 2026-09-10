@@ -14,7 +14,7 @@ export const archiveService = {
             collectionName: 'Orders',
             dateRange: { from: new Date(0), to: thresholdDate },
             status: 'Running',
-            triggeredBy: userId
+            triggeredBy: userId,
         });
         try {
             // In a real production system, you'd move these to a separate 'ArchivedOrder' collection
@@ -22,7 +22,7 @@ export const archiveService = {
             // Here we'll count how many would be archived
             const count = await Order.countDocuments({
                 storeId,
-                createdAt: { $lt: thresholdDate }
+                createdAt: { $lt: thresholdDate },
             });
             // Re-implementing simplified logic: deletion/movement would go here
             // await Order.deleteMany({ storeId, createdAt: { $lt: thresholdDate } });
@@ -46,7 +46,7 @@ export const archiveService = {
         await Notification.deleteMany({
             storeId,
             read: true,
-            createdAt: { $lt: thresholdDate }
+            createdAt: { $lt: thresholdDate },
         });
     },
     /**
@@ -60,7 +60,7 @@ export const archiveService = {
         // Move to Archive or compress
         await AuditLog.deleteMany({
             storeId,
-            createdAt: { $lt: thresholdDate }
+            createdAt: { $lt: thresholdDate },
         });
-    }
+    },
 };

@@ -14,7 +14,7 @@ export const notificationService = {
                 inApp: true,
                 email: true,
                 sms: false,
-                whatsapp: false
+                whatsapp: false,
             };
             const channelsToSend = [];
             // Determine channels based on user settings and forced overrides
@@ -49,13 +49,13 @@ export const notificationService = {
                 actionUrl: payload.actionUrl,
                 metadata: payload.metadata,
                 channels: channelsToSend,
-                isRead: false
+                isRead: false,
             });
             await notification.save();
             // 2. External Deliveries — tracked per-channel (previously fire-and-forget
             // with no record of which channels actually succeeded vs. silently failed).
             const deliveryStatus = [
-                { channel: 'In-App', success: true }
+                { channel: 'In-App', success: true },
             ];
             const deliveries = [];
             if (channelsToSend.includes('Email') && user.email) {
@@ -68,27 +68,27 @@ export const notificationService = {
                             <h2 style="color: #6366f1;">${payload.title}</h2>
                             <p>${payload.message}</p>
                             ${payload.actionUrl ? `<a href="${payload.actionUrl}" style="display: inline-block; padding: 10px 20px; background: #6366f1; color: white; text-decoration: none; border-radius: 5px;">View Details</a>` : ''}
-                        </div>`
-                    })
+                        </div>`,
+                    }),
                 });
             }
             if (channelsToSend.includes('SMS') && user.phone) {
                 deliveries.push({
                     channel: 'SMS',
-                    promise: sendSMS({ to: user.phone, body: `${payload.title}: ${payload.message}` })
+                    promise: sendSMS({ to: user.phone, body: `${payload.title}: ${payload.message}` }),
                 });
             }
             if (channelsToSend.includes('WhatsApp') && user.phone) {
                 deliveries.push({
                     channel: 'WhatsApp',
-                    promise: sendWhatsApp({ to: user.phone, body: `*${payload.title}*\n\n${payload.message}` })
+                    promise: sendWhatsApp({ to: user.phone, body: `*${payload.title}*\n\n${payload.message}` }),
                 });
             }
             const results = await Promise.allSettled(deliveries.map((d) => d.promise));
             results.forEach((result, i) => {
                 deliveryStatus.push({
                     channel: deliveries[i].channel,
-                    success: result.status === 'fulfilled' && result.value === true
+                    success: result.status === 'fulfilled' && result.value === true,
                 });
             });
             if (deliveries.length > 0) {
@@ -97,7 +97,7 @@ export const notificationService = {
             return true;
         }
         catch (error) {
-            console.error("Notification Service Error:", error);
+            console.error('Notification Service Error:', error);
             return false;
         }
     },
@@ -107,19 +107,19 @@ export const notificationService = {
             return true;
         }
         catch (error) {
-            console.error("Queue Notification Failed:", error);
+            console.error('Queue Notification Failed:', error);
             return false;
         }
     },
     broadcastToStore: async (storeId, title, message, type = 'INFO') => {
         const users = await User.find({ storeId, isActive: true });
-        const promises = users.map(user => notificationService.send({
+        const promises = users.map((user) => notificationService.send({
             recipientId: user._id.toString(),
             storeId,
             title,
             message,
-            type
+            type,
         }));
         await Promise.all(promises);
-    }
+    },
 };

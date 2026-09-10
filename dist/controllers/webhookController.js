@@ -32,7 +32,7 @@ export const stripeWebhook = asyncHandler(async (req, res) => {
         if (storeId) {
             await Store.findByIdAndUpdate(storeId, {
                 subscriptionStatus: 'Active',
-                lastBillingDate: new Date()
+                lastBillingDate: new Date(),
             });
             console.log(`Store ${storeId} subscription activated via Stripe.`);
         }
@@ -93,7 +93,7 @@ export const razorpayWebhook = asyncHandler(async (req, res) => {
             await Store.findByIdAndUpdate(invoice.storeId, {
                 subscriptionStatus: 'Active',
                 subscriptionPlan: invoice.plan,
-                lastBillingDate: new Date()
+                lastBillingDate: new Date(),
             });
             console.log(`Store ${invoice.storeId} subscription activated via Razorpay (order ${razorpayOrderId}).`);
         }
@@ -122,36 +122,40 @@ export const createWebhook = asyncHandler(async (req, res) => {
         events,
         secret,
         tenantId: req.tenantId,
-        isActive: true
+        isActive: true,
     });
-    res.status(201).json(new ApiResponse(201, webhook, "Webhook created successfully"));
+    res.status(201).json(new ApiResponse(201, webhook, 'Webhook created successfully'));
 });
 // @desc    Update a webhook
 // @route   PUT /api/webhooks/:id
 export const updateWebhook = asyncHandler(async (req, res) => {
-    const webhook = await Webhook.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, req.body, { returnDocument: 'after' });
+    const webhook = await Webhook.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, req.body, {
+        returnDocument: 'after',
+    });
     if (!webhook) {
-        return res.status(404).json(new ApiResponse(404, null, "Webhook not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Webhook not found'));
     }
-    res.status(200).json(new ApiResponse(200, webhook, "Webhook updated successfully"));
+    res.status(200).json(new ApiResponse(200, webhook, 'Webhook updated successfully'));
 });
 // @desc    Delete a webhook
 // @route   DELETE /api/webhooks/:id
 export const deleteWebhook = asyncHandler(async (req, res) => {
     const webhook = await Webhook.findOneAndDelete({ _id: req.params.id, tenantId: req.tenantId });
     if (!webhook) {
-        return res.status(404).json(new ApiResponse(404, null, "Webhook not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Webhook not found'));
     }
     // Also delete associated logs
     await WebhookLog.deleteMany({ webhookId: webhook._id });
-    res.status(200).json(new ApiResponse(200, null, "Webhook deleted successfully"));
+    res.status(200).json(new ApiResponse(200, null, 'Webhook deleted successfully'));
 });
 // @desc    Get webhook delivery logs
 // @route   GET /api/webhooks/:id/logs
 export const getWebhookLogs = asyncHandler(async (req, res) => {
     const logs = await WebhookLog.find({
         webhookId: req.params.id,
-        tenantId: req.tenantId
-    }).sort({ createdAt: -1 }).limit(50);
+        tenantId: req.tenantId,
+    })
+        .sort({ createdAt: -1 })
+        .limit(50);
     res.status(200).json(new ApiResponse(200, logs));
 });

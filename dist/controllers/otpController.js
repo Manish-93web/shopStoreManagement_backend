@@ -10,7 +10,7 @@ import { sendSMS } from '../utils/smsService.js';
 export const sendOTP = asyncHandler(async (req, res) => {
     const { phone } = req.body;
     if (!phone) {
-        return res.status(400).json(new ApiResponse(400, null, "Phone number is required"));
+        return res.status(400).json(new ApiResponse(400, null, 'Phone number is required'));
     }
     // Generate 6-digit OTP
     const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -20,19 +20,24 @@ export const sendOTP = asyncHandler(async (req, res) => {
     // Real Twilio send when TWILIO_* env vars are configured; smsService.ts itself
     // logs the code to the console as an honest fallback when they aren't (previously
     // this path never attempted a real send at all, even when Twilio was configured).
-    const smsSent = await sendSMS({ to: phone, body: `Your Store360 verification code is ${code}. It expires in 5 minutes.` });
-    res.status(200).json(new ApiResponse(200, null, smsSent ? "OTP sent successfully" : "OTP generated — SMS delivery is not configured on this server; check the server console for the code"));
+    const smsSent = await sendSMS({
+        to: phone,
+        body: `Your Store360 verification code is ${code}. It expires in 5 minutes.`,
+    });
+    res.status(200).json(new ApiResponse(200, null, smsSent
+        ? 'OTP sent successfully'
+        : 'OTP generated — SMS delivery is not configured on this server; check the server console for the code'));
 });
 // @desc    Verify OTP and log in
 // @route   POST /api/v1/auth/verify-otp
 export const verifyOTP = asyncHandler(async (req, res) => {
     const { phone, code } = req.body;
     if (!phone || !code) {
-        return res.status(400).json(new ApiResponse(400, null, "Phone and code are required"));
+        return res.status(400).json(new ApiResponse(400, null, 'Phone and code are required'));
     }
     const otpRecord = await OTP.findOne({ phone, code });
     if (!otpRecord) {
-        return res.status(400).json(new ApiResponse(400, null, "Invalid or expired OTP"));
+        return res.status(400).json(new ApiResponse(400, null, 'Invalid or expired OTP'));
     }
     // OTP verified, find user
     const user = await User.findOne({ phone });
@@ -41,7 +46,9 @@ export const verifyOTP = asyncHandler(async (req, res) => {
         // return res.status(404).json(new ApiResponse(404, null, "No account linked to this phone"));
         // Option 2: Auto-register (Simpler for demo, but needs storeId etc in real app)
         // For now, let's assume the user must already exist or we return a 404
-        return res.status(404).json(new ApiResponse(404, null, "No user found with this phone number. Please register first."));
+        return res
+            .status(404)
+            .json(new ApiResponse(404, null, 'No user found with this phone number. Please register first.'));
     }
     // Clean up OTP record
     await OTP.deleteOne({ _id: otpRecord._id });
@@ -58,7 +65,7 @@ export const verifyOTP = asyncHandler(async (req, res) => {
         entity: 'User',
         entityId: user._id,
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent']
+        userAgent: req.headers['user-agent'],
     });
     res.status(200).json(new ApiResponse(200, {
         user: {
@@ -66,9 +73,9 @@ export const verifyOTP = asyncHandler(async (req, res) => {
             name: user.name,
             email: user.email,
             role: user.role,
-            storeId: user.storeId
+            storeId: user.storeId,
         },
         accessToken,
-        refreshToken
-    }, "Login successful"));
+        refreshToken,
+    }, 'Login successful'));
 });

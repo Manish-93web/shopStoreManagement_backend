@@ -18,7 +18,7 @@ import redisClient, { bumpCacheVersion } from '../config/redis.js';
 // @route   POST /api/orders
 // @access  Private (Cashier/Manager/Owner)
 export const createOrder = asyncHandler(async (req, res) => {
-    const { customerId, items, subTotal, taxTotal, discountTotal, discountReason, grandTotal, paymentDetails, loyaltyPointsUsed, couponCode } = req.body;
+    const { customerId, items, subTotal, taxTotal, discountTotal, discountReason, grandTotal, paymentDetails, loyaltyPointsUsed, couponCode, } = req.body;
     const orderNumber = `ORD-${Date.now()}`;
     // 0. Increment Coupon usage if applicable
     if (couponCode) {
@@ -29,14 +29,14 @@ export const createOrder = asyncHandler(async (req, res) => {
     if (walletPayment && customerId) {
         const wallet = await Wallet.findOne({ customer: customerId, storeId: req.tenantId });
         if (!wallet || wallet.balance < walletPayment.amount) {
-            return res.status(400).json(new ApiResponse(400, null, "Insufficient wallet balance"));
+            return res.status(400).json(new ApiResponse(400, null, 'Insufficient wallet balance'));
         }
         wallet.balance -= walletPayment.amount;
         wallet.transactions.push({
             type: 'DEBIT',
             amount: walletPayment.amount,
             reason: `Order ${orderNumber}`,
-            date: new Date()
+            date: new Date(),
         });
         await wallet.save();
     }
@@ -74,7 +74,7 @@ export const createOrder = asyncHandler(async (req, res) => {
         paymentDetails,
         loyaltyPointsUsed,
         cashier: req.user._id,
-        paymentStatus: paymentDetails.reduce((acc, p) => acc + p.amount, 0) >= grandTotal ? 'Paid' : 'Partial'
+        paymentStatus: paymentDetails.reduce((acc, p) => acc + p.amount, 0) >= grandTotal ? 'Paid' : 'Partial',
     });
     // Write accurate PaymentTransactions for Audit Tracing
     const paymentOps = paymentDetails.map((paymentRaw) => ({
@@ -87,7 +87,7 @@ export const createOrder = asyncHandler(async (req, res) => {
         amount: paymentRaw.amount,
         status: 'Completed',
         performedBy: req.user._id,
-        notes: `Payment for Order ${orderNumber}`
+        notes: `Payment for Order ${orderNumber}`,
     }));
     await PaymentTransaction.insertMany(paymentOps);
     // 2. Handle Customer Loyalty
@@ -99,7 +99,7 @@ export const createOrder = asyncHandler(async (req, res) => {
         // Deduct points if used
         if (loyaltyPointsUsed) {
             if (loyalty.points < loyaltyPointsUsed) {
-                return res.status(400).json(new ApiResponse(400, null, "Insufficient loyalty points"));
+                return res.status(400).json(new ApiResponse(400, null, 'Insufficient loyalty points'));
             }
             loyalty.points -= loyaltyPointsUsed;
             loyalty.totalRedeemed += loyaltyPointsUsed;
@@ -127,7 +127,7 @@ export const createOrder = asyncHandler(async (req, res) => {
         // Also update legacy field in Customer for compatibility and trigger notifications
         const customer = await Customer.findById(customerId);
         if (customer) {
-            customer.loyaltyPoints += (earnedPoints - (loyaltyPointsUsed || 0));
+            customer.loyaltyPoints += earnedPoints - (loyaltyPointsUsed || 0);
             await customer.save();
             // Send Automated Notifications via Central Service
             await notificationService.send({
@@ -136,7 +136,7 @@ export const createOrder = asyncHandler(async (req, res) => {
                 title: `Order Confirmed: ${orderNumber}`,
                 message: `Thank you for your purchase of ₹${grandTotal}. Your order has been successfully placed.`,
                 type: 'SUCCESS',
-                metadata: { orderId: order._id }
+                metadata: { orderId: order._id },
             });
         }
     }
@@ -149,7 +149,7 @@ export const createOrder = asyncHandler(async (req, res) => {
             title: `New Sale: ${orderNumber}`,
             message: `A new sale of ₹${grandTotal} has been recorded by ${req.user.name}.`,
             type: 'INFO',
-            metadata: { orderId: order._id }
+            metadata: { orderId: order._id },
         });
     }
     // Reduce inventory for each item
@@ -167,13 +167,13 @@ export const createOrder = asyncHandler(async (req, res) => {
         emitToStore(req.tenantId.toString(), 'inventory-update', {
             productId: item.product,
             variantId: item.variant,
-            newQuantity: inv?.quantity
+            newQuantity: inv?.quantity,
         });
     }
     await bumpCacheVersion(req.tenantId.toString());
     // 4. Trigger Webhooks
     webhookService.trigger('order.created', req.tenantId.toString(), order);
-    res.status(201).json(new ApiResponse(201, order, "Order created successfully"));
+    res.status(201).json(new ApiResponse(201, order, 'Order created successfully'));
 });
 // @desc    Get all orders for a store
 // @route   GET /api/orders
@@ -187,7 +187,7 @@ export const getOrders = asyncHandler(async (req, res) => {
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached)
-            return res.status(200).json(new ApiResponse(200, JSON.parse(cached), "Orders from cache"));
+            return res.status(200).json(new ApiResponse(200, JSON.parse(cached), 'Orders from cache'));
     }
     const query = { storeId: req.tenantId };
     if (search) {
@@ -207,8 +207,8 @@ export const getOrders = asyncHandler(async (req, res) => {
             total,
             page,
             limit,
-            pages: Math.ceil(total / limit)
-        }
+            pages: Math.ceil(total / limit),
+        },
     };
     if (process.env.SKIP_REDIS !== 'true') {
         await redisClient.setEx(cacheKey, 300, JSON.stringify(response)); // 5 min cache
@@ -224,7 +224,7 @@ export const getOrderById = asyncHandler(async (req, res) => {
         .populate('items.product')
         .populate('cashier', 'name');
     if (!order) {
-        return res.status(404).json(new ApiResponse(404, null, "Order not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Order not found'));
     }
     res.status(200).json(new ApiResponse(200, order));
 });
@@ -240,11 +240,11 @@ export const cancelOrder = asyncHandler(async (req, res) => {
         order = await Order.findOne({ _id: req.params.id, storeId: req.tenantId }).session(session);
         if (!order) {
             await session.abortTransaction();
-            return res.status(404).json(new ApiResponse(404, null, "Order not found"));
+            return res.status(404).json(new ApiResponse(404, null, 'Order not found'));
         }
         if (order.status === 'Cancelled') {
             await session.abortTransaction();
-            return res.status(400).json(new ApiResponse(400, null, "Order is already cancelled"));
+            return res.status(400).json(new ApiResponse(400, null, 'Order is already cancelled'));
         }
         for (const item of order.items) {
             const invQuery = { store: req.tenantId };
@@ -261,7 +261,14 @@ export const cancelOrder = asyncHandler(async (req, res) => {
         if (walletPayment && order.customer) {
             await Wallet.findOneAndUpdate({ customer: order.customer, storeId: req.tenantId }, {
                 $inc: { balance: walletPayment.amount },
-                $push: { transactions: { type: 'CREDIT', amount: walletPayment.amount, reason: `Cancelled order ${order.orderNumber}`, date: new Date() } }
+                $push: {
+                    transactions: {
+                        type: 'CREDIT',
+                        amount: walletPayment.amount,
+                        reason: `Cancelled order ${order.orderNumber}`,
+                        date: new Date(),
+                    },
+                },
             }, { session, upsert: true });
             await Customer.findByIdAndUpdate(order.customer, { $inc: { walletBalance: walletPayment.amount } }, { session });
         }
@@ -270,14 +277,16 @@ export const cancelOrder = asyncHandler(async (req, res) => {
         }
         order.status = 'Cancelled';
         await order.save({ session });
-        await AuditLog.create([{
+        await AuditLog.create([
+            {
                 userId: req.user._id,
                 storeId: req.tenantId,
                 action: 'CANCELLED_ORDER',
                 entity: 'Order',
                 entityId: order._id,
-                details: `Cancelled order ${order.orderNumber}`
-            }], { session });
+                details: `Cancelled order ${order.orderNumber}`,
+            },
+        ], { session });
         await session.commitTransaction();
     }
     catch (err) {
@@ -289,8 +298,14 @@ export const cancelOrder = asyncHandler(async (req, res) => {
     }
     await bumpCacheVersion(req.tenantId.toString());
     for (const item of order.items) {
-        const inv = await Inventory.findOne(item.variant ? { variant: item.variant, store: req.tenantId } : { product: item.product, store: req.tenantId, variant: { $exists: false } });
-        emitToStore(req.tenantId.toString(), 'inventory-update', { productId: item.product, variantId: item.variant, newQuantity: inv?.quantity });
+        const inv = await Inventory.findOne(item.variant
+            ? { variant: item.variant, store: req.tenantId }
+            : { product: item.product, store: req.tenantId, variant: { $exists: false } });
+        emitToStore(req.tenantId.toString(), 'inventory-update', {
+            productId: item.product,
+            variantId: item.variant,
+            newQuantity: inv?.quantity,
+        });
     }
-    res.status(200).json(new ApiResponse(200, order, "Order cancelled"));
+    res.status(200).json(new ApiResponse(200, order, 'Order cancelled'));
 });

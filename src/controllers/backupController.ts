@@ -7,6 +7,7 @@ import BackupJob from '../models/BackupJob.js';
 import RestoreJob from '../models/RestoreJob.js';
 import fs from 'fs/promises';
 import path from 'path';
+import { runBackupForStore } from '../services/backupService.js';
 
 export const backupController = {
     // @desc    Export store data as direct download
@@ -34,47 +35,17 @@ export const backupController = {
     triggerBackup: asyncHandler(async (req: TenantRequest, res: Response) => {
         const userId = req.user?._id;
         if (!userId) {
-            return res.status(401).json(new ApiResponse(401, null, "User not authenticated"));
+            return res.status(401).json(new ApiResponse(401, null, 'User not authenticated'));
         }
 
-        const backupJob = await BackupJob.create({
-            storeId: req.tenantId,
-            type: 'Full',
-            status: 'Running',
-            triggeredBy: userId
-        });
+        // Shares the same S3-vs-local storage logic as the daily cron backup,
+        // instead of a separate local-only copy of it.
+        const backupJob = await runBackupForStore(req.tenantId!, userId, 'backup');
 
-        // Run in background (don't await fully to keep request short, but for this demo we await for simplicity)
-        try {
-            const collections = ['Product', 'Order', 'Customer', 'Supplier', 'Inventory', 'Brand', 'Category'];
-            const backupData: any = {};
-
-            for (const col of collections) {
-                const Model = mongoose.model(col);
-                backupData[col] = await Model.find({ storeId: req.tenantId }).lean();
-            }
-
-            const backupDir = path.join(process.cwd(), 'uploads', 'backups');
-            await fs.mkdir(backupDir, { recursive: true });
-
-            const fileName = `backup_${req.tenantId}_${Date.now()}.json`;
-            const filePath = path.join(backupDir, fileName);
-            const content = JSON.stringify(backupData, null, 2);
-
-            await fs.writeFile(filePath, content);
-
-            backupJob.status = 'Completed';
-            backupJob.fileUrl = `/uploads/backups/${fileName}`;
-            backupJob.fileSize = Buffer.byteLength(content);
-            await backupJob.save();
-
-            res.status(200).json(new ApiResponse(200, backupJob, "Backup completed successfully"));
-        } catch (error: any) {
-            backupJob.status = 'Failed';
-            backupJob.error = error.message;
-            await backupJob.save();
-            res.status(500).json(new ApiResponse(500, null, "Backup failed: " + error.message));
+        if (backupJob.status === 'Failed') {
+            return res.status(500).json(new ApiResponse(500, null, 'Backup failed: ' + backupJob.error));
         }
+        res.status(200).json(new ApiResponse(200, backupJob, 'Backup completed successfully'));
     }),
 
     // @desc    Get backup history
@@ -85,7 +56,7 @@ export const backupController = {
             .populate('triggeredBy', 'name email')
             .limit(20);
 
-        res.status(200).json(new ApiResponse(200, history, "Backup history retrieved"));
+        res.status(200).json(new ApiResponse(200, history, 'Backup history retrieved'));
     }),
 
     // @desc    Restore from a backup
@@ -96,14 +67,14 @@ export const backupController = {
 
         const backup = await BackupJob.findOne({ _id: id, storeId: req.tenantId });
         if (!backup || !backup.fileUrl) {
-            return res.status(404).json(new ApiResponse(404, null, "Backup file not found"));
+            return res.status(404).json(new ApiResponse(404, null, 'Backup file not found'));
         }
 
         const restoreJob = await RestoreJob.create({
             backupJobId: backup._id,
             storeId: req.tenantId,
             status: 'Running',
-            restoredBy: userId
+            restoredBy: userId,
         });
 
         try {
@@ -128,12 +99,12 @@ export const backupController = {
             restoreJob.status = 'Completed';
             await restoreJob.save();
 
-            res.status(200).json(new ApiResponse(200, restoreJob, "Data restored successfully"));
+            res.status(200).json(new ApiResponse(200, restoreJob, 'Data restored successfully'));
         } catch (error: any) {
             restoreJob.status = 'Failed';
             restoreJob.error = error.message;
             await restoreJob.save();
-            res.status(500).json(new ApiResponse(500, null, "Restore failed: " + error.message));
+            res.status(500).json(new ApiResponse(500, null, 'Restore failed: ' + error.message));
         }
-    })
+    }),
 };

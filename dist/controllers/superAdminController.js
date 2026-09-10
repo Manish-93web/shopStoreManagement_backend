@@ -25,12 +25,12 @@ export const getSystemStats = asyncHandler(async (req, res) => {
         Store.find().populate('subscriptionPlan').limit(10).sort({ createdAt: -1 }),
         Order.aggregate([
             { $match: { status: 'Completed' } },
-            { $group: { _id: null, total: { $sum: '$grandTotal' } } }
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
         ]),
         Order.aggregate([
             { $match: { status: 'Completed', createdAt: { $gte: startOfMonth } } },
-            { $group: { _id: null, total: { $sum: '$grandTotal' } } }
-        ])
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
+        ]),
     ]);
     res.status(200).json(new ApiResponse(200, {
         totalStores,
@@ -38,7 +38,7 @@ export const getSystemStats = asyncHandler(async (req, res) => {
         totalUsers,
         totalRevenue: aggregateRevenue[0]?.total || 0,
         monthlyRevenue: monthlyRevenue[0]?.total || 0,
-        recentStores: stores
+        recentStores: stores,
     }));
 });
 // @desc    Get all stores (Tenants)
@@ -57,19 +57,21 @@ export const getAllStores = asyncHandler(async (req, res) => {
         stores,
         totalPages: Math.ceil(total / Number(limit)),
         currentPage: Number(page),
-        totalTenants: total
+        totalTenants: total,
     }));
 });
 // @desc    Per-tenant analytics drill-down (previously only an aggregate platform-wide
 //          view and a flat tenant list existed — no way to inspect a single tenant)
 // @route   GET /api/v1/super-admin/stores/:id/analytics
 export const getTenantAnalytics = asyncHandler(async (req, res) => {
-    const store = await Store.findById(req.params.id).populate('owner', 'name email phone').populate('subscriptionPlan');
+    const store = await Store.findById(req.params.id)
+        .populate('owner', 'name email phone')
+        .populate('subscriptionPlan');
     if (!store)
-        return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
     const startOfMonth = dayjs().startOf('month').toDate();
     const thirtyDaysAgo = dayjs().subtract(30, 'days').startOf('day').toDate();
-    const [totalOrders, monthlyOrders, totalProducts, totalCustomers, totalEmployees, revenueAgg, monthlyRevenueAgg, recentOrders, dailyRevenue, recentActivity] = await Promise.all([
+    const [totalOrders, monthlyOrders, totalProducts, totalCustomers, totalEmployees, revenueAgg, monthlyRevenueAgg, recentOrders, dailyRevenue, recentActivity,] = await Promise.all([
         Order.countDocuments({ storeId: store._id }),
         Order.countDocuments({ storeId: store._id, createdAt: { $gte: startOfMonth } }),
         Product.countDocuments({ storeId: store._id }),
@@ -77,17 +79,25 @@ export const getTenantAnalytics = asyncHandler(async (req, res) => {
         User.countDocuments({ storeId: store._id }),
         Order.aggregate([
             { $match: { storeId: store._id, status: 'Completed' } },
-            { $group: { _id: null, total: { $sum: '$grandTotal' } } }
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
         ]),
         Order.aggregate([
             { $match: { storeId: store._id, status: 'Completed', createdAt: { $gte: startOfMonth } } },
-            { $group: { _id: null, total: { $sum: '$grandTotal' } } }
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
         ]),
-        Order.find({ storeId: store._id }).sort({ createdAt: -1 }).limit(10).select('orderNumber grandTotal status createdAt'),
+        Order.find({ storeId: store._id })
+            .sort({ createdAt: -1 })
+            .limit(10)
+            .select('orderNumber grandTotal status createdAt'),
         Order.aggregate([
             { $match: { storeId: store._id, status: 'Completed', createdAt: { $gte: thirtyDaysAgo } } },
-            { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, total: { $sum: '$grandTotal' } } },
-            { $sort: { _id: 1 } }
+            {
+                $group: {
+                    _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                    total: { $sum: '$grandTotal' },
+                },
+            },
+            { $sort: { _id: 1 } },
         ]),
         AuditLog.find({ storeId: store._id }).populate('userId', 'name').sort({ createdAt: -1 }).limit(15),
     ]);
@@ -110,7 +120,7 @@ export const getTenantAnalytics = asyncHandler(async (req, res) => {
 export const toggleStoreStatus = asyncHandler(async (req, res) => {
     const store = await Store.findById(req.params.id);
     if (!store)
-        return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
     store.isActive = !store.isActive;
     store.status = store.isActive ? 'Approved' : 'Suspended';
     await store.save();
@@ -122,7 +132,7 @@ export const approveStore = asyncHandler(async (req, res) => {
     const { approve } = req.body;
     const store = await Store.findById(req.params.id);
     if (!store)
-        return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
     if (approve) {
         store.status = 'Approved';
         store.isActive = true;
@@ -149,7 +159,7 @@ export const getSystemAuditLogs = asyncHandler(async (req, res) => {
     res.status(200).json(new ApiResponse(200, {
         logs,
         totalPages: Math.ceil(total / Number(limit)),
-        currentPage: Number(page)
+        currentPage: Number(page),
     }));
 });
 // @desc    System health for Super Admin — infrastructure/integration status, not
@@ -159,7 +169,7 @@ export const getSystemHealth = asyncHandler(async (req, res) => {
     const mongoStateNames = ['disconnected', 'connected', 'connecting', 'disconnecting'];
     const mongoStatus = mongoStateNames[mongoose.connection.readyState] || 'unknown';
     const redisConfigured = process.env.SKIP_REDIS !== 'true';
-    const redisStatus = !redisConfigured ? 'disabled' : (redisClient.isReady ? 'connected' : 'disconnected');
+    const redisStatus = !redisConfigured ? 'disabled' : redisClient.isReady ? 'connected' : 'disconnected';
     const [reportQueueCounts, notificationQueueCounts] = await Promise.all([
         reportQueue ? reportQueue.getJobCounts().catch(() => null) : Promise.resolve(null),
         notificationQueue ? notificationQueue.getJobCounts().catch(() => null) : Promise.resolve(null),
@@ -169,7 +179,7 @@ export const getSystemHealth = asyncHandler(async (req, res) => {
             status: 'ok',
             uptimeSeconds: Math.floor(process.uptime()),
             nodeVersion: process.version,
-            environment: process.env.NODE_ENV || 'development'
+            environment: process.env.NODE_ENV || 'development',
         },
         database: { status: mongoStatus },
         redis: { status: redisStatus, configured: redisConfigured },
@@ -181,12 +191,20 @@ export const getSystemHealth = asyncHandler(async (req, res) => {
             sentry: !!process.env.SENTRY_DSN,
             razorpay: !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET),
             stripe: !!process.env.STRIPE_SECRET_KEY,
-            twilioSms: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER),
-            twilioWhatsapp: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WHATSAPP_NUMBER),
+            twilioSms: !!(process.env.TWILIO_ACCOUNT_SID &&
+                process.env.TWILIO_AUTH_TOKEN &&
+                process.env.TWILIO_PHONE_NUMBER),
+            twilioWhatsapp: !!(process.env.TWILIO_ACCOUNT_SID &&
+                process.env.TWILIO_AUTH_TOKEN &&
+                process.env.TWILIO_WHATSAPP_NUMBER),
             smtp: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
-            cloudinary: !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET),
-            s3Backups: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_S3_BUCKET),
-        }
+            cloudinary: !!(process.env.CLOUDINARY_CLOUD_NAME &&
+                process.env.CLOUDINARY_API_KEY &&
+                process.env.CLOUDINARY_API_SECRET),
+            s3Backups: !!(process.env.AWS_ACCESS_KEY_ID &&
+                process.env.AWS_SECRET_ACCESS_KEY &&
+                process.env.AWS_S3_BUCKET),
+        },
     }));
 });
 // @desc    Broadcast notification to all active store owners
@@ -194,17 +212,17 @@ export const getSystemHealth = asyncHandler(async (req, res) => {
 export const broadcastNotification = asyncHandler(async (req, res) => {
     const { title, message, type = 'INFO' } = req.body;
     if (!title || !message) {
-        return res.status(400).json(new ApiResponse(400, null, "Title and message are required"));
+        return res.status(400).json(new ApiResponse(400, null, 'Title and message are required'));
     }
     // Find all store owners
     const owners = await User.find({ role: 'STORE_OWNER', isActive: true });
     // Use notificationService to send to each
-    const notificationPromises = owners.map(owner => notificationService.send({
+    const notificationPromises = owners.map((owner) => notificationService.send({
         recipientId: owner._id,
         storeId: owner.storeId, // Most owners have a primary storeId
         title: `[SYSTEM] ${title}`,
         message,
-        type
+        type,
     }));
     await Promise.all(notificationPromises);
     res.status(200).json(new ApiResponse(200, null, `Broadcast sent to ${owners.length} owners`));
@@ -216,17 +234,17 @@ export const broadcastNotification = asyncHandler(async (req, res) => {
 export const sendTenantNotification = asyncHandler(async (req, res) => {
     const { title, message, type = 'INFO' } = req.body;
     if (!title || !message) {
-        return res.status(400).json(new ApiResponse(400, null, "Title and message are required"));
+        return res.status(400).json(new ApiResponse(400, null, 'Title and message are required'));
     }
     const store = await Store.findById(req.params.id);
     if (!store)
-        return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
     await notificationService.send({
         recipientId: store.owner,
         storeId: store._id,
         title: `[SUPPORT] ${title}`,
         message,
-        type
+        type,
     });
     res.status(200).json(new ApiResponse(200, null, `Message sent to ${store.name}'s owner`));
 });
