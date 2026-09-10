@@ -11,6 +11,11 @@ const NotificationSchema = new Schema({
             enum: ['In-App', 'Email', 'SMS', 'WhatsApp'],
             default: ['In-App']
         }],
+    deliveryStatus: [{
+            channel: { type: String, enum: ['In-App', 'Email', 'SMS', 'WhatsApp'] },
+            success: { type: Boolean },
+            _id: false
+        }],
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: false },
     metadata: { type: Schema.Types.Mixed },
 }, { timestamps: true });

@@ -1,10 +1,11 @@
-// Mock Twilio structure
-// import twilio from 'twilio';
+import twilio from 'twilio';
 
 interface SmsOptions {
     to: string;
     body: string;
 }
+
+let client: ReturnType<typeof twilio> | null = null;
 
 export const sendSMS = async (options: SmsOptions) => {
     try {
@@ -13,25 +14,30 @@ export const sendSMS = async (options: SmsOptions) => {
         const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
         if (!accountSid || !authToken || !fromNumber) {
-            console.log("-----------------------------------------");
-            console.log(`[MOCK SMS] To: ${options.to}`);
-            console.log(`[MOCK SMS] Body: ${options.body}`);
-            console.log("-----------------------------------------");
-            return true;
+            console.log('-----------------------------------------');
+            console.log(
+                `[SMS NOT CONFIGURED] Set TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_PHONE_NUMBER to send real SMS.`
+            );
+            console.log(`[SMS] To: ${options.to}`);
+            console.log(`[SMS] Body: ${options.body}`);
+            console.log('-----------------------------------------');
+            return false;
         }
 
-        // If credentials exist, initialize client
-        // const client = twilio(accountSid, authToken);
-        // await client.messages.create({
-        //     body: options.body,
-        //     from: fromNumber,
-        //     to: options.to
-        // });
+        if (!client) {
+            client = twilio(accountSid, authToken);
+        }
 
-        console.log(`[SMS] Sent successfully to ${options.to}`);
+        const message = await client.messages.create({
+            body: options.body,
+            from: fromNumber,
+            to: options.to,
+        });
+
+        console.log(`[SMS] Sent successfully to ${options.to} (SID: ${message.sid})`);
         return true;
     } catch (error) {
-        console.error("SMS Sending Failed:", error);
+        console.error('SMS Sending Failed:', error);
         return false;
     }
 };

@@ -32,7 +32,7 @@ export const promotionService = {
         if (cartTotal < coupon.minPurchaseAmount) {
             throw new Error(`Minimum purchase of ₹${coupon.minPurchaseAmount} required`);
         }
-        let discountAmount = 0;
+        let discountAmount;
         if (coupon.discountType === 'Percentage') {
             discountAmount = (cartTotal * coupon.discountValue) / 100;
             if (coupon.maxDiscountAmount && discountAmount > coupon.maxDiscountAmount) {
@@ -66,7 +66,7 @@ export const promotionService = {
         // Simple implementation: choose first applicable rule by priority
         for (const rule of rules) {
             if (rule.triggerType === 'TotalCartValue' && cartTotal >= rule.threshold) {
-                let discountAmount = 0;
+                let discountAmount;
                 if (rule.discountType === 'Percentage') {
                     discountAmount = (cartTotal * rule.discountValue) / 100;
                 }
@@ -86,7 +86,7 @@ export const promotionService = {
                 if (targetItems.length > 0) {
                     const targetTotal = targetItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
                     if (targetTotal >= rule.threshold) {
-                        let discountAmount = 0;
+                        let discountAmount;
                         if (rule.discountType === 'Percentage') {
                             discountAmount = (targetTotal * rule.discountValue) / 100;
                         }

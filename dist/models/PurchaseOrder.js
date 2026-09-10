@@ -17,7 +17,7 @@ const PurchaseOrderSchema = new Schema({
     grandTotal: { type: Number, required: true },
     status: {
         type: String,
-        enum: ['Draft', 'Sent', 'Approved', 'Received', 'Cancelled'],
+        enum: ['Draft', 'Sent', 'Approved', 'Partially Received', 'Received', 'Cancelled'],
         default: 'Draft'
     },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },

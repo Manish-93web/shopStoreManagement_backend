@@ -10,8 +10,10 @@ export const initReportScheduler = () => {
         try {
             const stores = await Store.find({ isActive: true });
             for (const store of stores) {
-                // Find owner of the store
-                const owner = await User.findOne({ storeId: store._id, role: 'Owner' });
+                // Store owners are linked via Store.owner, not User.storeId (that field is
+                // for staff members only) — this previously queried role: 'Owner', a value
+                // that never matches UserRole.STORE_OWNER, so no report was ever queued.
+                const owner = await User.findById(store.owner);
                 if (owner) {
                     await addReportJob({
                         tenantId: store._id.toString(),

@@ -1,14 +1,12 @@
 import express from 'express';
 import { protect } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
-import {
-    getGeneralLedger,
-    exportAccountingData
-} from '../controllers/accountingController.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
+import { getGeneralLedger, exportAccountingData } from '../controllers/accountingController.js';
 
 const router = express.Router();
 
-router.use(protect, tenantHandler);
+router.use(protect, tenantHandler, checkTrialExpiry);
 
 router.get('/ledger', getGeneralLedger);
 router.get('/export', exportAccountingData);

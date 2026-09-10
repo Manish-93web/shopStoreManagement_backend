@@ -1,11 +1,12 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { backupController } from '../controllers/backupController.js';
 
 const router = express.Router();
 
-router.use(protect, tenantHandler);
+router.use(protect, tenantHandler, checkTrialExpiry);
 
 router.get('/export', authorize('STORE_OWNER'), backupController.exportData);
 router.get('/history', authorize('STORE_OWNER'), backupController.getBackupHistory);

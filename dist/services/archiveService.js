@@ -1,7 +1,7 @@
 import ArchiveJob from '../models/ArchiveJob.js';
 import Order from '../models/Order.js';
 import Notification from '../models/Notification.js';
-import ActivityLog from '../models/ActivityLog.js';
+import AuditLog from '../models/AuditLog.js';
 import dayjs from 'dayjs';
 export const archiveService = {
     /**
@@ -50,12 +50,15 @@ export const archiveService = {
         });
     },
     /**
-     * Archive audit/activity logs (older than 6 months)
+     * Archive audit logs (older than 6 months). Previously targeted the unused
+     * ActivityLog model (nothing in the app ever writes to it, so this silently
+     * cleaned up nothing every week) — AuditLog is the model every write path
+     * actually uses.
      */
     archiveLogs: async (storeId) => {
         const thresholdDate = dayjs().subtract(6, 'months').toDate();
         // Move to Archive or compress
-        await ActivityLog.deleteMany({
+        await AuditLog.deleteMany({
             storeId,
             createdAt: { $lt: thresholdDate }
         });

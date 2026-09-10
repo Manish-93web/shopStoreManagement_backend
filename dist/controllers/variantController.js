@@ -3,6 +3,7 @@ import Product from '../models/Product.js';
 import Inventory from '../models/Inventory.js';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
+import { bumpCacheVersion } from '../config/redis.js';
 // @desc    Get all variants for a product
 // @route   GET /api/v1/products/:productId/variants
 export const getVariants = asyncHandler(async (req, res) => {
@@ -35,6 +36,9 @@ export const createVariant = asyncHandler(async (req, res) => {
         productId,
         storeId: req.tenantId
     };
+    if (!variantData.barcode) {
+        delete variantData.barcode;
+    }
     const variant = await ProductVariant.create(variantData);
     // Initialize inventory for this variant
     await Inventory.create({
@@ -45,12 +49,16 @@ export const createVariant = asyncHandler(async (req, res) => {
     });
     // Mark parent product as having variants
     await Product.findByIdAndUpdate(productId, { hasVariants: true });
+    await bumpCacheVersion(req.tenantId.toString());
     res.status(201).json(new ApiResponse(201, variant, "Variant created successfully"));
 });
 // @desc    Update a variant
 // @route   PUT /api/v1/products/variants/:id
 export const updateVariant = asyncHandler(async (req, res) => {
     const { stock, initialStock, ...updateData } = req.body;
+    if (!updateData.barcode) {
+        delete updateData.barcode;
+    }
     const variant = await ProductVariant.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, updateData, { returnDocument: 'after' });
     if (!variant)
         return res.status(404).json(new ApiResponse(404, null, "Variant not found"));
@@ -59,6 +67,7 @@ export const updateVariant = asyncHandler(async (req, res) => {
     if (newStock !== undefined) {
         await Inventory.findOneAndUpdate({ variant: variant._id, store: req.tenantId }, { $set: { quantity: newStock } }, { upsert: true, returnDocument: 'after' });
     }
+    await bumpCacheVersion(req.tenantId.toString());
     res.status(200).json(new ApiResponse(200, variant, "Variant updated successfully"));
 });
 // @desc    Delete a variant
@@ -74,5 +83,6 @@ export const deleteVariant = asyncHandler(async (req, res) => {
     if (remainingCount === 0) {
         await Product.findByIdAndUpdate(variant.productId, { hasVariants: false });
     }
+    await bumpCacheVersion(req.tenantId.toString());
     res.status(200).json(new ApiResponse(200, null, "Variant deleted successfully"));
 });

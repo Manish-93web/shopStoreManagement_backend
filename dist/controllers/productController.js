@@ -2,14 +2,17 @@ import mongoose from 'mongoose';
 import { customAlphabet } from 'nanoid';
 import Product from '../models/Product.js';
 import Inventory from '../models/Inventory.js';
+import ProductVariant from '../models/ProductVariant.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
-import redisClient from '../config/redis.js';
+import redisClient, { getCacheVersion, bumpCacheVersion } from '../config/redis.js';
 import AuditLog from '../models/AuditLog.js';
 import StockAdjustment from '../models/StockAdjustment.js';
 import { notificationService } from '../services/notificationService.js';
 import Store from '../models/Store.js';
 import webhookService from '../services/webhookService.js';
+import Category from '../models/Category.js';
+import { emitToStore } from '../config/socket.js';
 // @desc    Get all products for a tenant
 // @route   GET /api/products
 export const getProducts = asyncHandler(async (req, res) => {
@@ -17,10 +20,17 @@ export const getProducts = asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const skip = (page - 1) * limit;
     const { search, category, brand, stockStatus } = req.query;
+    const cacheVersion = await getCacheVersion(req.tenantId.toString());
+    const cacheKey = `products:${req.tenantId}:v${cacheVersion}:${JSON.stringify({ search, category, brand, stockStatus, page, limit })}`;
+    if (process.env.SKIP_REDIS !== 'true') {
+        const cached = await redisClient.get(cacheKey);
+        if (cached)
+            return res.status(200).json(new ApiResponse(200, JSON.parse(cached), "Products from cache"));
+    }
     const query = { storeId: req.tenantId };
     if (category && category !== 'All') {
         const getSubCategoryIds = async (parentId) => {
-            const children = await mongoose.model('Category').find({ parentId, storeId: req.tenantId }).select('_id');
+            const children = await Category.find({ parentId, storeId: req.tenantId }).select('_id');
             let ids = [parentId];
             for (const child of children) {
                 const childIds = await getSubCategoryIds(child._id.toString());
@@ -55,6 +65,7 @@ export const getProducts = asyncHandler(async (req, res) => {
     }
     const products = await Product.find(query)
         .populate('category')
+        .populate('taxRule')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -62,9 +73,13 @@ export const getProducts = asyncHandler(async (req, res) => {
     const productIds = products.map(p => p._id);
     const inventories = await Inventory.find({ product: { $in: productIds }, store: req.tenantId });
     const inventoryMap = new Map(inventories.map(inv => [inv.product.toString(), inv]));
-    const productsWithInventory = products.map(p => ({
+    const productsWithInventory = products.map((p) => ({
         ...p,
-        inventory: inventoryMap.get(p._id.toString())
+        inventory: inventoryMap.get(p._id.toString()),
+        // A linked Percentage tax rule overrides the flat taxRate; a Fixed-amount rule
+        // isn't supported end-to-end by the order/GST-split pipeline yet, so it falls
+        // back to the flat rate rather than silently mis-computing tax.
+        effectiveTaxRate: p.taxRule && p.taxRule.type === 'Percentage' ? p.taxRule.rate : p.taxRate
     }));
     const total = await Product.countDocuments(query);
     const response = {
@@ -76,7 +91,28 @@ export const getProducts = asyncHandler(async (req, res) => {
             pages: Math.ceil(total / limit)
         }
     };
+    if (process.env.SKIP_REDIS !== 'true') {
+        // Shorter TTL than customers/orders (300s) since stock changes on every sale.
+        await redisClient.setEx(cacheKey, 60, JSON.stringify(response));
+    }
     res.status(200).json(new ApiResponse(200, response));
+});
+// @desc    Get a single product with its inventory, variants, and recent activity
+// @route   GET /api/products/:id
+export const getProductById = asyncHandler(async (req, res) => {
+    const product = await Product.findOne({ _id: req.params.id, storeId: req.tenantId }).populate('category').populate('taxRule');
+    if (!product) {
+        return res.status(404).json(new ApiResponse(404, null, "Product not found"));
+    }
+    const [inventory, variants, activityLog] = await Promise.all([
+        Inventory.findOne({ product: product._id, store: req.tenantId }),
+        ProductVariant.find({ product: product._id }),
+        AuditLog.find({ storeId: req.tenantId, entity: 'Product', entityId: product._id })
+            .populate('userId', 'name')
+            .sort({ createdAt: -1 })
+            .limit(20)
+    ]);
+    res.status(200).json(new ApiResponse(200, { product, inventory, variants, activityLog }));
 });
 // @desc    Create a new product
 // @route   POST /api/products
@@ -97,7 +133,7 @@ export const createProduct = asyncHandler(async (req, res) => {
     }
     const product = await Product.create(productData);
     if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.del(`products:${req.tenantId}`);
+        await bumpCacheVersion(req.tenantId.toString());
     }
     await Inventory.create({
         product: product._id,
@@ -121,11 +157,11 @@ export const createProduct = asyncHandler(async (req, res) => {
 // @desc    Update product
 // @route   PUT /api/products/:id
 export const updateProduct = asyncHandler(async (req, res) => {
-    const product = await Product.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body);
+    const product = await Product.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { returnDocument: 'after' }).populate('taxRule');
     if (!product)
         return res.status(404).json(new ApiResponse(404, null, "Product not found"));
     if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.del(`products:${req.tenantId}`);
+        await bumpCacheVersion(req.tenantId.toString());
     }
     // Audit Log
     await AuditLog.create({
@@ -150,7 +186,7 @@ export const deleteProduct = asyncHandler(async (req, res) => {
         return res.status(404).json(new ApiResponse(404, null, "Product not found"));
     await Inventory.deleteMany({ product: req.params.id });
     if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.del(`products:${req.tenantId}`);
+        await bumpCacheVersion(req.tenantId.toString());
     }
     // Audit Log
     await AuditLog.create({
@@ -165,29 +201,58 @@ export const deleteProduct = asyncHandler(async (req, res) => {
     });
     res.status(200).json(new ApiResponse(200, null, "Product deleted successfully"));
 });
+const VALID_ADJUSTMENT_REASONS = ['Damaged', 'Correction', 'Restock', 'Expire', 'Other'];
 // @desc    Adjust stock level
 // @route   PATCH /api/products/:id/adjust
 export const adjustStock = asyncHandler(async (req, res) => {
     const { quantity, reason, type } = req.body;
     const adjustQty = type === 'add' ? quantity : -quantity;
-    const inv = await Inventory.findOneAndUpdate({ product: req.params.id, store: req.tenantId }, {
-        $inc: { quantity: adjustQty },
-        $set: { lastStockUpdate: new Date() }
-    }, { new: true, upsert: true });
-    // Track the adjustment
-    await StockAdjustment.create({
-        productId: req.params.id,
-        storeId: req.tenantId,
-        adjustmentAmount: adjustQty,
-        type: type === 'add' ? 'ADD' : 'SUBTRACT',
-        reason: reason || 'Correction',
-        notes: req.body.notes || '',
-        createdBy: req.user?._id
-    });
+    const adjustmentReason = reason || 'Correction';
+    // Validate before touching data — an invalid reason used to fail *after* the
+    // inventory quantity was already incremented (no transaction), leaving the
+    // stock changed with no matching audit record. Fail fast instead.
+    if (!VALID_ADJUSTMENT_REASONS.includes(adjustmentReason)) {
+        return res.status(400).json(new ApiResponse(400, null, `Invalid reason. Must be one of: ${VALID_ADJUSTMENT_REASONS.join(', ')}`));
+    }
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    let inv;
+    try {
+        inv = await Inventory.findOneAndUpdate({ product: req.params.id, store: req.tenantId }, {
+            $inc: { quantity: adjustQty },
+            $set: { lastStockUpdate: new Date() }
+        }, { new: true, upsert: true, session });
+        // Track the adjustment
+        await StockAdjustment.create([{
+                productId: req.params.id,
+                storeId: req.tenantId,
+                previousQuantity: (inv?.quantity || 0) - adjustQty,
+                newQuantity: inv?.quantity || 0,
+                adjustmentAmount: adjustQty,
+                type: type === 'add' ? 'ADD' : 'SUBTRACT',
+                reason: adjustmentReason,
+                notes: req.body.notes || '',
+                createdBy: req.user?._id
+            }], { session });
+        await session.commitTransaction();
+    }
+    catch (err) {
+        await session.abortTransaction();
+        throw err;
+    }
+    finally {
+        session.endSession();
+    }
     // Invalidate cache
     if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.del(`products:${req.tenantId}`);
+        await bumpCacheVersion(req.tenantId.toString());
     }
+    // Notify clients about stock change
+    emitToStore(req.tenantId.toString(), 'inventory-update', {
+        productId: req.params.id,
+        variantId: undefined,
+        newQuantity: inv?.quantity
+    });
     // 3. Check for Low Stock Notification
     if (inv && inv.quantity <= (inv.lowStockThreshold || 5)) {
         const store = await Store.findById(req.tenantId);
@@ -203,7 +268,7 @@ export const adjustStock = asyncHandler(async (req, res) => {
             });
         }
     }
-    res.status(200).json(new ApiResponse(200, { inventory: inv, reason }, 'Stock adjusted'));
+    res.status(200).json(new ApiResponse(200, { inventory: inv, reason: adjustmentReason }, 'Stock adjusted'));
 });
 // @desc    Bulk import products
 // @route   POST /api/products/bulk
@@ -238,7 +303,7 @@ export const bulkImportProducts = asyncHandler(async (req, res) => {
         }
     }
     if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.del(`products:${req.tenantId}`);
+        await bumpCacheVersion(req.tenantId.toString());
     }
     res.status(200).json(new ApiResponse(200, results, `Imported ${results.success} products`));
 });
@@ -262,7 +327,7 @@ export const bulkUpdateProducts = asyncHandler(async (req, res) => {
         }
     }
     if (process.env.SKIP_REDIS !== 'true') {
-        await redisClient.del(`products:${req.tenantId}`);
+        await bumpCacheVersion(req.tenantId.toString());
     }
     await AuditLog.create({
         userId: req.user?._id,

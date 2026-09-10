@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { importController } from '../controllers/importController.js';
 import multer from 'multer';
 
@@ -12,19 +13,25 @@ const upload = multer({
         const allowedTypes = [
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'text/csv',
-            'application/vnd.ms-excel'
+            'application/vnd.ms-excel',
         ];
         if (allowedTypes.includes(file.mimetype)) {
             cb(null, true);
         } else {
             cb(new Error('Invalid file type. Only Excel and CSV are allowed.'));
         }
-    }
+    },
 });
 const router = express.Router();
 
-router.use(protect, tenantHandler);
+router.use(protect, tenantHandler, checkTrialExpiry);
 
-router.post('/products', protect, authorize('STORE_OWNER', 'SUPER_ADMIN'), upload.single('file'), importController.importProducts);
+router.post(
+    '/products',
+    protect,
+    authorize('STORE_OWNER', 'SUPER_ADMIN'),
+    upload.single('file'),
+    importController.importProducts
+);
 
 export default router;

@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import {
     getSalesReport,
     getTopSellingProducts,
@@ -14,12 +15,12 @@ import {
     getSalesAuditTrail,
     getInventoryAuditReport,
     queueReport,
-    exportReport
+    exportReport,
 } from '../controllers/reportController.js';
 
 const router = express.Router();
 
-router.use(protect, tenantHandler);
+router.use(protect, tenantHandler, checkTrialExpiry);
 
 router.get('/sales', getSalesReport);
 router.get('/top-products', getTopSellingProducts);

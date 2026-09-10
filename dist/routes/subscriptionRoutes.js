@@ -5,7 +5,9 @@ import { subscriptionController } from '../controllers/subscriptionController.js
 const router = express.Router();
 router.use(protect, tenantHandler);
 router.get('/my-plan', subscriptionController.getSubscription);
-router.post('/upgrade', authorize('Owner'), subscriptionController.upgradePlan);
+router.get('/plans', subscriptionController.getPlans);
+router.post('/upgrade', authorize('STORE_OWNER'), subscriptionController.upgradePlan);
+router.post('/checkout', authorize('STORE_OWNER'), subscriptionController.checkout);
 // Super Admin Only
 router.get('/all-plans', authorize('SUPER_ADMIN'), subscriptionController.getPlans);
 router.post('/plans', authorize('SUPER_ADMIN'), subscriptionController.createPlan);

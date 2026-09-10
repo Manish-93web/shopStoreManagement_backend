@@ -3,7 +3,7 @@ const ProductVariantSchema = new Schema({
     productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
     name: { type: String, required: true },
     sku: { type: String, required: true, unique: true },
-    barcode: { type: String, required: true, unique: true },
+    barcode: { type: String, unique: true, sparse: true },
     price: { type: Number },
     costPrice: { type: Number },
     images: [{ type: String }],

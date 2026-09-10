@@ -1,6 +1,8 @@
+import mongoose from 'mongoose';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
 import Customer from '../models/Customer.js';
+import AuditLog from '../models/AuditLog.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { emitToStore } from '../config/socket.js';
@@ -11,12 +13,12 @@ import Wallet from '../models/Wallet.js';
 import webhookService from '../services/webhookService.js';
 import Coupon from '../models/Coupon.js';
 import Loyalty from '../models/Loyalty.js';
-import redisClient from '../config/redis.js';
+import redisClient, { bumpCacheVersion } from '../config/redis.js';
 // @desc    Create a new POS order
 // @route   POST /api/orders
 // @access  Private (Cashier/Manager/Owner)
 export const createOrder = asyncHandler(async (req, res) => {
-    const { customerId, items, subTotal, taxTotal, discountTotal, grandTotal, paymentDetails, loyaltyPointsUsed, couponCode } = req.body;
+    const { customerId, items, subTotal, taxTotal, discountTotal, discountReason, grandTotal, paymentDetails, loyaltyPointsUsed, couponCode } = req.body;
     const orderNumber = `ORD-${Date.now()}`;
     // 0. Increment Coupon usage if applicable
     if (couponCode) {
@@ -38,14 +40,36 @@ export const createOrder = asyncHandler(async (req, res) => {
         });
         await wallet.save();
     }
+    // GST split: CGST+SGST for intra-state sales, IGST for inter-state.
+    // Defaults to intra-state when the store has no state on file, or there's no
+    // customer / the customer has no state on file (the common walk-in POS case).
+    const gstStore = await Store.findById(req.tenantId);
+    let gstCustomerState;
+    if (customerId) {
+        const gstCustomer = await Customer.findById(customerId).select('state');
+        gstCustomerState = gstCustomer?.state;
+    }
+    const isInterState = !!(gstStore?.state && gstCustomerState && gstStore.state !== gstCustomerState);
+    const taxType = isInterState ? 'Inter-State' : 'Intra-State';
+    const itemsWithGstSplit = items.map((item) => {
+        const itemTax = item.tax || 0;
+        return {
+            ...item,
+            cgst: isInterState ? 0 : itemTax / 2,
+            sgst: isInterState ? 0 : itemTax / 2,
+            igst: isInterState ? itemTax : 0,
+        };
+    });
     const order = await Order.create({
         orderNumber,
         storeId: req.tenantId,
         customer: customerId,
-        items,
+        items: itemsWithGstSplit,
         subTotal,
         taxTotal,
+        taxType,
         discountTotal,
+        discountReason,
         grandTotal,
         paymentDetails,
         loyaltyPointsUsed,
@@ -117,7 +141,7 @@ export const createOrder = asyncHandler(async (req, res) => {
         }
     }
     // 3. Notify Store Owner about New Order
-    const store = await Store.findById(req.tenantId);
+    const store = gstStore;
     if (store) {
         await notificationService.send({
             recipientId: store.owner.toString(),
@@ -146,6 +170,7 @@ export const createOrder = asyncHandler(async (req, res) => {
             newQuantity: inv?.quantity
         });
     }
+    await bumpCacheVersion(req.tenantId.toString());
     // 4. Trigger Webhooks
     webhookService.trigger('order.created', req.tenantId.toString(), order);
     res.status(201).json(new ApiResponse(201, order, "Order created successfully"));
@@ -157,20 +182,25 @@ export const getOrders = asyncHandler(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
-    const cacheKey = `orders:${req.tenantId}:p${page}:l${limit}`;
+    const search = req.query.search?.trim();
+    const cacheKey = `orders:${req.tenantId}:p${page}:l${limit}:s${search || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached)
             return res.status(200).json(new ApiResponse(200, JSON.parse(cached), "Orders from cache"));
     }
-    const orders = await Order.find({ storeId: req.tenantId })
+    const query = { storeId: req.tenantId };
+    if (search) {
+        query.orderNumber = { $regex: search, $options: 'i' };
+    }
+    const orders = await Order.find(query)
         .populate('customer')
         .populate('cashier', 'name')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean();
-    const total = await Order.countDocuments({ storeId: req.tenantId });
+    const total = await Order.countDocuments(query);
     const response = {
         orders,
         pagination: {
@@ -197,4 +227,70 @@ export const getOrderById = asyncHandler(async (req, res) => {
         return res.status(404).json(new ApiResponse(404, null, "Order not found"));
     }
     res.status(200).json(new ApiResponse(200, order));
+});
+// @desc    Cancel a completed order — reverses inventory, refunds any Wallet payment,
+//          and returns redeemed loyalty points. Earned loyalty points are not clawed back.
+// @route   PUT /api/orders/:id/cancel
+// @access  Private (Cashier/Manager/Owner)
+export const cancelOrder = asyncHandler(async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    let order;
+    try {
+        order = await Order.findOne({ _id: req.params.id, storeId: req.tenantId }).session(session);
+        if (!order) {
+            await session.abortTransaction();
+            return res.status(404).json(new ApiResponse(404, null, "Order not found"));
+        }
+        if (order.status === 'Cancelled') {
+            await session.abortTransaction();
+            return res.status(400).json(new ApiResponse(400, null, "Order is already cancelled"));
+        }
+        for (const item of order.items) {
+            const invQuery = { store: req.tenantId };
+            if (item.variant) {
+                invQuery.variant = item.variant;
+            }
+            else {
+                invQuery.product = item.product;
+                invQuery.variant = { $exists: false };
+            }
+            await Inventory.findOneAndUpdate(invQuery, { $inc: { quantity: item.quantity } }, { session, upsert: true });
+        }
+        const walletPayment = order.paymentDetails.find((p) => p.method === 'Wallet');
+        if (walletPayment && order.customer) {
+            await Wallet.findOneAndUpdate({ customer: order.customer, storeId: req.tenantId }, {
+                $inc: { balance: walletPayment.amount },
+                $push: { transactions: { type: 'CREDIT', amount: walletPayment.amount, reason: `Cancelled order ${order.orderNumber}`, date: new Date() } }
+            }, { session, upsert: true });
+            await Customer.findByIdAndUpdate(order.customer, { $inc: { walletBalance: walletPayment.amount } }, { session });
+        }
+        if (order.loyaltyPointsUsed && order.customer) {
+            await Loyalty.findOneAndUpdate({ customer: order.customer, storeId: req.tenantId }, { $inc: { points: order.loyaltyPointsUsed, totalRedeemed: -order.loyaltyPointsUsed } }, { session, upsert: true });
+        }
+        order.status = 'Cancelled';
+        await order.save({ session });
+        await AuditLog.create([{
+                userId: req.user._id,
+                storeId: req.tenantId,
+                action: 'CANCELLED_ORDER',
+                entity: 'Order',
+                entityId: order._id,
+                details: `Cancelled order ${order.orderNumber}`
+            }], { session });
+        await session.commitTransaction();
+    }
+    catch (err) {
+        await session.abortTransaction();
+        throw err;
+    }
+    finally {
+        session.endSession();
+    }
+    await bumpCacheVersion(req.tenantId.toString());
+    for (const item of order.items) {
+        const inv = await Inventory.findOne(item.variant ? { variant: item.variant, store: req.tenantId } : { product: item.product, store: req.tenantId, variant: { $exists: false } });
+        emitToStore(req.tenantId.toString(), 'inventory-update', { productId: item.product, variantId: item.variant, newQuantity: inv?.quantity });
+    }
+    res.status(200).json(new ApiResponse(200, order, "Order cancelled"));
 });

@@ -6,6 +6,7 @@ const StockAdjustmentSchema = new Schema({
     previousQuantity: { type: Number, required: true },
     newQuantity: { type: Number, required: true },
     adjustmentAmount: { type: Number, required: true },
+    type: { type: String, enum: ['ADD', 'SUBTRACT'], required: true },
     reason: {
         type: String,
         enum: ['Damaged', 'Correction', 'Restock', 'Expire', 'Other'],

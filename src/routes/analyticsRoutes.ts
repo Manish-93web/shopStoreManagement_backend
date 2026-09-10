@@ -8,14 +8,15 @@ import {
     getRetentionTrends,
     getSalesPrediction,
     getCategoryAnalytics,
-    getSupplierAnalytics
+    getSupplierAnalytics,
 } from '../controllers/analyticsController.js';
 
 import { checkFeatureAccess } from '../middleware/featureAccess.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 
 const router = express.Router();
 
-router.use(protect, tenantHandler, checkFeatureAccess('Basic Analytics'));
+router.use(protect, tenantHandler, checkTrialExpiry, checkFeatureAccess('Basic Analytics'));
 
 router.get('/prediction', checkFeatureAccess('AI Predictions'), getSalesPrediction);
 router.get('/categories', getCategoryAnalytics);

@@ -1,11 +1,12 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { promotionController } from '../controllers/promotionController.js';
 
 const router = express.Router();
 
-router.use(protect, tenantHandler);
+router.use(protect, tenantHandler, checkTrialExpiry);
 
 // POS Usage
 router.post('/validate', promotionController.validate);

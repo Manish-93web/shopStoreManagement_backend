@@ -2,10 +2,13 @@ import { Worker } from 'bullmq';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
 import Report from '../models/Report.js';
+import User from '../models/User.js';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
+import { sendEmail } from '../utils/emailService.js';
+const APP_URL = process.env.APP_URL || `http://localhost:${process.env.PORT || 5000}`;
 const connection = {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT || '6379')
@@ -59,7 +62,7 @@ if (process.env.SKIP_REDIS !== 'true') {
                 const doc = new PDFDocument();
                 const stream = fs.createWriteStream(filePath);
                 doc.pipe(stream);
-                doc.fontSize(20).text(`RetailSync ${type.toUpperCase()} Report`, { align: 'center' });
+                doc.fontSize(20).text(`Store360 ${type.toUpperCase()} Report`, { align: 'center' });
                 doc.moveDown();
                 // ... (similar PDF logic as controller)
                 doc.end();
@@ -67,8 +70,17 @@ if (process.env.SKIP_REDIS !== 'true') {
             }
             // Update report record with success
             reportRecord.status = 'completed';
-            reportRecord.fileUrl = `/reports/${fileName}`;
+            reportRecord.fileUrl = `/report-files/${fileName}`;
             await reportRecord.save();
+            // Notify the requesting user by email — honest no-op (console log) when SMTP isn't configured
+            const requester = await User.findById(userId);
+            if (requester?.email) {
+                await sendEmail({
+                    to: requester.email,
+                    subject: `Your ${type} report is ready`,
+                    html: `<p>Your ${type} report (${format.toUpperCase()}) has finished generating.</p><p><a href="${APP_URL}${reportRecord.fileUrl}">Download report</a></p>`
+                });
+            }
         }
         catch (error) {
             console.error(`Report generation failed: ${error.message}`);

@@ -1,21 +1,26 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js';
-import { getStores, getMyStores, createStore, updateStore, toggleStoreStatus } from '../controllers/storeController.js';
+import { tenantHandler } from '../middleware/tenantHandler.js';
+import {
+    getStores,
+    getMyStores,
+    getCurrentStore,
+    createStore,
+    updateStore,
+    toggleStoreStatus,
+} from '../controllers/storeController.js';
 
 const router = express.Router();
 
 router.use(protect);
 
-router.route('/')
-    .get(authorize('SUPER_ADMIN'), getStores)
-    .post(authorize('STORE_OWNER'), createStore);
+router.route('/').get(authorize('SUPER_ADMIN'), getStores).post(authorize('STORE_OWNER'), createStore);
 
 router.get('/my-stores', authorize('STORE_OWNER', 'SUPER_ADMIN'), getMyStores);
+router.get('/current', tenantHandler, getCurrentStore);
 
-router.route('/:id')
-    .put(authorize('STORE_OWNER', 'SUPER_ADMIN'), updateStore);
+router.route('/:id').put(authorize('STORE_OWNER', 'SUPER_ADMIN'), updateStore);
 
-router.route('/:id/toggle')
-    .patch(authorize('SUPER_ADMIN'), toggleStoreStatus);
+router.route('/:id/toggle').patch(authorize('SUPER_ADMIN'), toggleStoreStatus);
 
 export default router;

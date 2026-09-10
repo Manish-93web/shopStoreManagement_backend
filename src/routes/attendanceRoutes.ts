@@ -1,11 +1,12 @@
 import express from 'express';
 import { protect } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { clockIn, clockOut, getAttendance } from '../controllers/attendanceController.js';
 
 const router = express.Router();
 
-router.use(protect, tenantHandler);
+router.use(protect, tenantHandler, checkTrialExpiry);
 
 router.post('/clock-in', clockIn);
 router.patch('/clock-out', clockOut);

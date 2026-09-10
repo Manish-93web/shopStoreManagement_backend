@@ -1,4 +1,4 @@
-name: RetailSync CI/CD
+name: Store360 Backend CI
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
     - name: Use Node.js
@@ -18,6 +18,10 @@ jobs:
         node-version: '20'
         cache: 'npm'
     - run: npm install
-    - run: npm run build
-    - name: Run Lint
-      run: npm run test || true # Placeholder for tests
+    - name: Lint
+      run: npm run lint
+    - name: Type-check & build
+      run: npm run build
+    # No automated test suite exists yet — rather than mask that gap with a fake
+    # "npm run test || true" step that always reports green, lint + a real
+    # TypeScript build are what this pipeline actually verifies today.

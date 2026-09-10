@@ -1,12 +1,19 @@
 import { Response } from 'express';
+import mongoose from 'mongoose';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import Store from '../models/Store.js';
 import Order from '../models/Order.js';
 import User from '../models/User.js';
 import AuditLog from '../models/AuditLog.js';
+import Product from '../models/Product.js';
+import Customer from '../models/Customer.js';
+import dayjs from 'dayjs';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { notificationService } from '../services/notificationService.js';
+import redisClient from '../config/redis.js';
+import { reportQueue } from '../queues/reportQueue.js';
+import { notificationQueue } from '../queues/notificationQueue.js';
 
 // @desc    Get system-wide stats for Super Admin
 // @route   GET /api/v1/super-admin/stats
@@ -22,22 +29,24 @@ export const getSystemStats = asyncHandler(async (req: TenantRequest, res: Respo
         Store.find().populate('subscriptionPlan').limit(10).sort({ createdAt: -1 }),
         Order.aggregate([
             { $match: { status: 'Completed' } },
-            { $group: { _id: null, total: { $sum: '$grandTotal' } } }
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
         ]),
         Order.aggregate([
             { $match: { status: 'Completed', createdAt: { $gte: startOfMonth } } },
-            { $group: { _id: null, total: { $sum: '$grandTotal' } } }
-        ])
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
+        ]),
     ]);
 
-    res.status(200).json(new ApiResponse(200, {
-        totalStores,
-        totalOrders,
-        totalUsers,
-        totalRevenue: aggregateRevenue[0]?.total || 0,
-        monthlyRevenue: monthlyRevenue[0]?.total || 0,
-        recentStores: stores
-    }));
+    res.status(200).json(
+        new ApiResponse(200, {
+            totalStores,
+            totalOrders,
+            totalUsers,
+            totalRevenue: aggregateRevenue[0]?.total || 0,
+            monthlyRevenue: monthlyRevenue[0]?.total || 0,
+            recentStores: stores,
+        })
+    );
 });
 
 // @desc    Get all stores (Tenants)
@@ -55,19 +64,92 @@ export const getAllStores = asyncHandler(async (req: TenantRequest, res: Respons
 
     const total = await Store.countDocuments(query);
 
-    res.status(200).json(new ApiResponse(200, {
-        stores,
-        totalPages: Math.ceil(total / Number(limit)),
-        currentPage: Number(page),
-        totalTenants: total
-    }));
+    res.status(200).json(
+        new ApiResponse(200, {
+            stores,
+            totalPages: Math.ceil(total / Number(limit)),
+            currentPage: Number(page),
+            totalTenants: total,
+        })
+    );
+});
+
+// @desc    Per-tenant analytics drill-down (previously only an aggregate platform-wide
+//          view and a flat tenant list existed — no way to inspect a single tenant)
+// @route   GET /api/v1/super-admin/stores/:id/analytics
+export const getTenantAnalytics = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const store = await Store.findById(req.params.id)
+        .populate('owner', 'name email phone')
+        .populate('subscriptionPlan');
+    if (!store) return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
+
+    const startOfMonth = dayjs().startOf('month').toDate();
+    const thirtyDaysAgo = dayjs().subtract(30, 'days').startOf('day').toDate();
+
+    const [
+        totalOrders,
+        monthlyOrders,
+        totalProducts,
+        totalCustomers,
+        totalEmployees,
+        revenueAgg,
+        monthlyRevenueAgg,
+        recentOrders,
+        dailyRevenue,
+        recentActivity,
+    ] = await Promise.all([
+        Order.countDocuments({ storeId: store._id }),
+        Order.countDocuments({ storeId: store._id, createdAt: { $gte: startOfMonth } }),
+        Product.countDocuments({ storeId: store._id }),
+        Customer.countDocuments({ storeId: store._id }),
+        User.countDocuments({ storeId: store._id }),
+        Order.aggregate([
+            { $match: { storeId: store._id, status: 'Completed' } },
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
+        ]),
+        Order.aggregate([
+            { $match: { storeId: store._id, status: 'Completed', createdAt: { $gte: startOfMonth } } },
+            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
+        ]),
+        Order.find({ storeId: store._id })
+            .sort({ createdAt: -1 })
+            .limit(10)
+            .select('orderNumber grandTotal status createdAt'),
+        Order.aggregate([
+            { $match: { storeId: store._id, status: 'Completed', createdAt: { $gte: thirtyDaysAgo } } },
+            {
+                $group: {
+                    _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                    total: { $sum: '$grandTotal' },
+                },
+            },
+            { $sort: { _id: 1 } },
+        ]),
+        AuditLog.find({ storeId: store._id }).populate('userId', 'name').sort({ createdAt: -1 }).limit(15),
+    ]);
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            store,
+            totalOrders,
+            monthlyOrders,
+            totalProducts,
+            totalCustomers,
+            totalEmployees,
+            totalRevenue: revenueAgg[0]?.total || 0,
+            monthlyRevenue: monthlyRevenueAgg[0]?.total || 0,
+            recentOrders,
+            dailyRevenue: dailyRevenue.map((d: any) => ({ date: d._id, total: d.total })),
+            recentActivity,
+        })
+    );
 });
 
 // @desc    Toggle store active status (Suspend/Reactivate)
 // @route   PUT /api/v1/super-admin/stores/:id/status
 export const toggleStoreStatus = asyncHandler(async (req: TenantRequest, res: Response) => {
     const store = await Store.findById(req.params.id);
-    if (!store) return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+    if (!store) return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
 
     store.isActive = !store.isActive;
     store.status = store.isActive ? 'Approved' : 'Suspended';
@@ -81,7 +163,7 @@ export const toggleStoreStatus = asyncHandler(async (req: TenantRequest, res: Re
 export const approveStore = asyncHandler(async (req: TenantRequest, res: Response) => {
     const { approve } = req.body;
     const store = await Store.findById(req.params.id);
-    if (!store) return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+    if (!store) return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
 
     if (approve) {
         store.status = 'Approved';
@@ -91,7 +173,7 @@ export const approveStore = asyncHandler(async (req: TenantRequest, res: Respons
         store.status = 'Suspended';
         store.isActive = false;
     }
-    
+
     await store.save();
 
     res.status(200).json(new ApiResponse(200, store, `Store ${approve ? 'Approved' : 'Rejected'}`));
@@ -110,37 +192,123 @@ export const getSystemAuditLogs = asyncHandler(async (req: TenantRequest, res: R
 
     const total = await AuditLog.countDocuments();
 
-    res.status(200).json(new ApiResponse(200, {
-        logs,
-        totalPages: Math.ceil(total / Number(limit)),
-        currentPage: Number(page)
-    }));
+    res.status(200).json(
+        new ApiResponse(200, {
+            logs,
+            totalPages: Math.ceil(total / Number(limit)),
+            currentPage: Number(page),
+        })
+    );
+});
+
+// @desc    System health for Super Admin — infrastructure/integration status, not
+//          business metrics (those already exist in getSystemStats).
+// @route   GET /api/v1/super-admin/health
+export const getSystemHealth = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const mongoStateNames = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+    const mongoStatus = mongoStateNames[mongoose.connection.readyState] || 'unknown';
+
+    const redisConfigured = process.env.SKIP_REDIS !== 'true';
+    const redisStatus = !redisConfigured ? 'disabled' : redisClient.isReady ? 'connected' : 'disconnected';
+
+    const [reportQueueCounts, notificationQueueCounts] = await Promise.all([
+        reportQueue ? reportQueue.getJobCounts().catch(() => null) : Promise.resolve(null),
+        notificationQueue ? notificationQueue.getJobCounts().catch(() => null) : Promise.resolve(null),
+    ]);
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            server: {
+                status: 'ok',
+                uptimeSeconds: Math.floor(process.uptime()),
+                nodeVersion: process.version,
+                environment: process.env.NODE_ENV || 'development',
+            },
+            database: { status: mongoStatus },
+            redis: { status: redisStatus, configured: redisConfigured },
+            queues: {
+                reportGeneration: reportQueueCounts,
+                notifications: notificationQueueCounts,
+            },
+            integrations: {
+                sentry: !!process.env.SENTRY_DSN,
+                razorpay: !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET),
+                stripe: !!process.env.STRIPE_SECRET_KEY,
+                twilioSms: !!(
+                    process.env.TWILIO_ACCOUNT_SID &&
+                    process.env.TWILIO_AUTH_TOKEN &&
+                    process.env.TWILIO_PHONE_NUMBER
+                ),
+                twilioWhatsapp: !!(
+                    process.env.TWILIO_ACCOUNT_SID &&
+                    process.env.TWILIO_AUTH_TOKEN &&
+                    process.env.TWILIO_WHATSAPP_NUMBER
+                ),
+                smtp: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
+                cloudinary: !!(
+                    process.env.CLOUDINARY_CLOUD_NAME &&
+                    process.env.CLOUDINARY_API_KEY &&
+                    process.env.CLOUDINARY_API_SECRET
+                ),
+                s3Backups: !!(
+                    process.env.AWS_ACCESS_KEY_ID &&
+                    process.env.AWS_SECRET_ACCESS_KEY &&
+                    process.env.AWS_S3_BUCKET
+                ),
+            },
+        })
+    );
 });
 
 // @desc    Broadcast notification to all active store owners
 // @route   POST /api/v1/super-admin/broadcast
 export const broadcastNotification = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { title, message, type = 'info' } = req.body;
+    const { title, message, type = 'INFO' } = req.body;
 
     if (!title || !message) {
-        return res.status(400).json(new ApiResponse(400, null, "Title and message are required"));
+        return res.status(400).json(new ApiResponse(400, null, 'Title and message are required'));
     }
 
     // Find all store owners
     const owners = await User.find({ role: 'STORE_OWNER', isActive: true });
 
     // Use notificationService to send to each
-    const notificationPromises = owners.map(owner =>
+    const notificationPromises = owners.map((owner) =>
         notificationService.send({
             recipientId: owner._id as any,
             storeId: owner.storeId as any, // Most owners have a primary storeId
             title: `[SYSTEM] ${title}`,
             message,
-            type
+            type,
         })
     );
 
     await Promise.all(notificationPromises);
 
     res.status(200).json(new ApiResponse(200, null, `Broadcast sent to ${owners.length} owners`));
+});
+
+// @desc    Send a notification to a single tenant's owner — previously Super Admin
+//          could only broadcast to every store owner at once, with no way to message
+//          one tenant directly.
+// @route   POST /api/v1/super-admin/stores/:id/notify
+export const sendTenantNotification = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { title, message, type = 'INFO' } = req.body;
+
+    if (!title || !message) {
+        return res.status(400).json(new ApiResponse(400, null, 'Title and message are required'));
+    }
+
+    const store = await Store.findById(req.params.id);
+    if (!store) return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
+
+    await notificationService.send({
+        recipientId: store.owner as any,
+        storeId: store._id as any,
+        title: `[SUPPORT] ${title}`,
+        message,
+        type,
+    });
+
+    res.status(200).json(new ApiResponse(200, null, `Message sent to ${store.name}'s owner`));
 });

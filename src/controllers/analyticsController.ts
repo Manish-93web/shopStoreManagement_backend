@@ -10,6 +10,7 @@ import Supplier from '../models/Supplier.js';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import dayjs from 'dayjs';
+import { withCache } from '../config/redis.js';
 
 // @desc    Get Sales Prediction (AI Placeholder)
 // @route   GET /api/v1/analytics/prediction
@@ -20,7 +21,7 @@ export const getSalesPrediction = asyncHandler(async (req: TenantRequest, res: R
     const orders = await Order.find({
         storeId,
         createdAt: { $gte: thirtyDaysAgo },
-        status: 'Completed'
+        status: 'Completed',
     });
 
     const totalRevenue = orders.reduce((sum, order) => sum + order.grandTotal, 0);
@@ -29,21 +30,27 @@ export const getSalesPrediction = asyncHandler(async (req: TenantRequest, res: R
     const prediction = [];
     for (let i = 1; i <= 7; i++) {
         const date = dayjs().add(i, 'day').format('YYYY-MM-DD');
-        const variance = (Math.random() * 0.2) - 0.1;
+        const variance = Math.random() * 0.2 - 0.1;
         const predictedRevenue = dailyAverage * (1 + variance);
 
         prediction.push({
             date,
             predictedRevenue: Math.round(predictedRevenue),
-            confidence: 0.85
+            confidence: 0.85,
         });
     }
 
-    res.status(200).json(new ApiResponse(200, {
-        dailyAverage: Math.round(dailyAverage),
-        totalLast30Days: totalRevenue,
-        prediction
-    }, "Sales prediction generated successfully"));
+    res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                dailyAverage: Math.round(dailyAverage),
+                totalLast30Days: totalRevenue,
+                prediction,
+            },
+            'Sales prediction generated successfully'
+        )
+    );
 });
 
 // @desc    Get Sales by Category
@@ -51,62 +58,72 @@ export const getSalesPrediction = asyncHandler(async (req: TenantRequest, res: R
 export const getCategoryAnalytics = asyncHandler(async (req: TenantRequest, res: Response) => {
     const storeId = req.tenantId;
 
-    const orders = await Order.find({ storeId, status: 'Completed' })
-        .populate({ path: 'items.product', populate: { path: 'category' } });
-
-    const categorySales: Record<string, number> = {};
-
-    orders.forEach(order => {
-        order.items.forEach((item: any) => {
-            const product = item.product;
-            if (product) {
-                const catName = (product.category && typeof product.category === 'object')
-                    ? (product.category.name || 'Uncategorized')
-                    : (product.category || 'Uncategorized');
-                const revenue = item.price * item.quantity;
-                categorySales[catName] = (categorySales[catName] || 0) + revenue;
-            }
+    const { value: result } = await withCache(`analytics:categories:${storeId}`, 300, async () => {
+        const orders = await Order.find({ storeId, status: 'Completed' }).populate({
+            path: 'items.product',
+            populate: { path: 'category' },
         });
+
+        const categorySales: Record<string, number> = {};
+
+        orders.forEach((order) => {
+            order.items.forEach((item: any) => {
+                const product = item.product;
+                if (product) {
+                    const catName =
+                        product.category && typeof product.category === 'object'
+                            ? product.category.name || 'Uncategorized'
+                            : product.category || 'Uncategorized';
+                    const revenue = item.price * item.quantity;
+                    categorySales[catName] = (categorySales[catName] || 0) + revenue;
+                }
+            });
+        });
+
+        return Object.keys(categorySales)
+            .map((name) => ({
+                name,
+                value: categorySales[name],
+            }))
+            .sort((a, b) => b.value - a.value);
     });
 
-    const result = Object.keys(categorySales).map(name => ({
-        name,
-        value: categorySales[name]
-    })).sort((a, b) => b.value - a.value);
-
-    res.status(200).json(new ApiResponse(200, result, "Category analytics generated"));
+    res.status(200).json(new ApiResponse(200, result, 'Category analytics generated'));
 });
 
 // @desc    Get Dashboard Summary
 // @route   GET /api/v1/analytics/summary
 export const getDashboardSummary = asyncHandler(async (req: TenantRequest, res: Response) => {
     const storeId = req.tenantId;
-    const today = dayjs().startOf('day').toDate();
-    const yesterday = dayjs().subtract(1, 'day').startOf('day').toDate();
 
-    const [todayOrders, yesterdayOrders, totalProducts, lowStockCount] = await Promise.all([
-        Order.find({ storeId, createdAt: { $gte: today }, status: 'Completed' }),
-        Order.find({ storeId, createdAt: { $gte: yesterday, $lt: today }, status: 'Completed' }),
-        Product.countDocuments({ storeId }),
-        Inventory.countDocuments({ store: storeId, quantity: { $lte: 10 } })
-    ]);
+    const { value: summary } = await withCache(`analytics:summary:${storeId}`, 60, async () => {
+        const today = dayjs().startOf('day').toDate();
+        const yesterday = dayjs().subtract(1, 'day').startOf('day').toDate();
 
-    const todayRevenue = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
-    const yesterdayRevenue = yesterdayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
+        const [todayOrders, yesterdayOrders, totalProducts, lowStockCount] = await Promise.all([
+            Order.find({ storeId, createdAt: { $gte: today }, status: 'Completed' }),
+            Order.find({ storeId, createdAt: { $gte: yesterday, $lt: today }, status: 'Completed' }),
+            Product.countDocuments({ storeId }),
+            Inventory.countDocuments({ store: storeId, quantity: { $lte: 10 } }),
+        ]);
 
-    const revenueGrowth = yesterdayRevenue > 0
-        ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100
-        : 0;
+        const todayRevenue = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
+        const yesterdayRevenue = yesterdayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
 
-    res.status(200).json(new ApiResponse(200, {
-        today: {
-            revenue: todayRevenue,
-            orders: todayOrders.length,
-        },
-        revenueGrowth: Math.round(revenueGrowth),
-        totalProducts,
-        lowStockCount
-    }));
+        const revenueGrowth = yesterdayRevenue > 0 ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 : 0;
+
+        return {
+            today: {
+                revenue: todayRevenue,
+                orders: todayOrders.length,
+            },
+            revenueGrowth: Math.round(revenueGrowth),
+            totalProducts,
+            lowStockCount,
+        };
+    });
+
+    res.status(200).json(new ApiResponse(200, summary));
 });
 
 // @desc    Get Customer Retention Stats
@@ -118,7 +135,7 @@ export const getRetentionStats = asyncHandler(async (req: TenantRequest, res: Re
     const orders = await Order.find({ storeId, status: 'Completed' });
 
     const orderCounts: Record<string, number> = {};
-    orders.forEach(order => {
+    orders.forEach((order) => {
         if (order.customer) {
             const cid = order.customer.toString();
             orderCounts[cid] = (orderCounts[cid] || 0) + 1;
@@ -127,11 +144,12 @@ export const getRetentionStats = asyncHandler(async (req: TenantRequest, res: Re
 
     const stats = {
         totalCustomers: customers.length,
-        repeatCustomers: Object.values(orderCounts).filter(count => count > 1).length,
-        oneTimeCustomers: Object.values(orderCounts).filter(count => count === 1).length,
-        retentionRate: customers.length > 0
-            ? (Object.values(orderCounts).filter(count => count > 1).length / customers.length) * 100
-            : 0
+        repeatCustomers: Object.values(orderCounts).filter((count) => count > 1).length,
+        oneTimeCustomers: Object.values(orderCounts).filter((count) => count === 1).length,
+        retentionRate:
+            customers.length > 0
+                ? (Object.values(orderCounts).filter((count) => count > 1).length / customers.length) * 100
+                : 0,
     };
 
     res.status(200).json(new ApiResponse(200, stats));
@@ -145,12 +163,12 @@ export const getSupplierAnalytics = asyncHandler(async (req: TenantRequest, res:
     const [pos, payments, suppliers] = await Promise.all([
         PurchaseOrder.find({ storeId }),
         SupplierPayment.find({ storeId }),
-        Supplier.find({ storeId })
+        Supplier.find({ storeId }),
     ]);
 
-    const stats = suppliers.map(supplier => {
-        const supplierPOs = pos.filter(po => po.supplier.toString() === supplier._id.toString());
-        const supplierPayments = payments.filter(p => p.supplierId.toString() === supplier._id.toString());
+    const stats = suppliers.map((supplier) => {
+        const supplierPOs = pos.filter((po) => po.supplier.toString() === supplier._id.toString());
+        const supplierPayments = payments.filter((p) => p.supplierId.toString() === supplier._id.toString());
 
         const totalOrdered = supplierPOs.reduce((sum, po) => sum + po.grandTotal, 0);
         const totalPaid = supplierPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -162,49 +180,63 @@ export const getSupplierAnalytics = asyncHandler(async (req: TenantRequest, res:
             poCount: supplierPOs.length,
             totalOrdered,
             totalPaid,
-            pendingAmount: pendingAmount > 0 ? pendingAmount : 0
+            pendingAmount: pendingAmount > 0 ? pendingAmount : 0,
         };
     });
 
-    res.status(200).json(new ApiResponse(200, stats, "Supplier analytics generated"));
+    res.status(200).json(new ApiResponse(200, stats, 'Supplier analytics generated'));
 });
 
 // @desc    Get Category Growth (Month-over-Month)
 // @route   GET /api/v1/analytics/category-growth
 export const getCategoryGrowth = asyncHandler(async (req: TenantRequest, res: Response) => {
     const storeId = req.tenantId;
-    const now = dayjs();
-    const currentMonthStart = now.startOf('month').toDate();
-    const lastMonthStart = now.subtract(1, 'month').startOf('month').toDate();
 
-    const productPopulate = { path: 'items.product', populate: { path: 'category' } };
-    const [currentOrders, lastOrders] = await Promise.all([
-        Order.find({ storeId, createdAt: { $gte: currentMonthStart }, status: 'Completed' }).populate(productPopulate),
-        Order.find({ storeId, createdAt: { $gte: lastMonthStart, $lt: currentMonthStart }, status: 'Completed' }).populate(productPopulate)
-    ]);
+    const { value: growth } = await withCache(`analytics:category-growth:${storeId}`, 600, async () => {
+        const now = dayjs();
+        const currentMonthStart = now.startOf('month').toDate();
+        const lastMonthStart = now.subtract(1, 'month').startOf('month').toDate();
 
-    const calculateCatSales = (orders: any[]) => {
-        const sales: Record<string, number> = {};
-        orders.forEach(o => o.items.forEach((i: any) => {
-            if (i.product) {
-                const cat = (i.product.category && typeof i.product.category === 'object')
-                    ? (i.product.category.name || 'Uncategorized')
-                    : (i.product.category || 'Uncategorized');
-                sales[cat] = (sales[cat] || 0) + i.total;
-            }
-        }));
-        return sales;
-    };
+        const productPopulate = { path: 'items.product', populate: { path: 'category' } };
+        const [currentOrders, lastOrders] = await Promise.all([
+            Order.find({ storeId, createdAt: { $gte: currentMonthStart }, status: 'Completed' }).populate(
+                productPopulate
+            ),
+            Order.find({
+                storeId,
+                createdAt: { $gte: lastMonthStart, $lt: currentMonthStart },
+                status: 'Completed',
+            }).populate(productPopulate),
+        ]);
 
-    const currentSales = calculateCatSales(currentOrders);
-    const lastSales = calculateCatSales(lastOrders);
+        const calculateCatSales = (orders: any[]) => {
+            const sales: Record<string, number> = {};
+            orders.forEach((o) =>
+                o.items.forEach((i: any) => {
+                    if (i.product) {
+                        const cat =
+                            i.product.category && typeof i.product.category === 'object'
+                                ? i.product.category.name || 'Uncategorized'
+                                : i.product.category || 'Uncategorized';
+                        sales[cat] = (sales[cat] || 0) + i.total;
+                    }
+                })
+            );
+            return sales;
+        };
 
-    const growth = Object.keys(currentSales).map(cat => {
-        const current = currentSales[cat] || 0;
-        const last = lastSales[cat] || 0;
-        const change = last > 0 ? ((current - last) / last) * 100 : 100;
-        return { name: cat, growth: Math.round(change), current, last };
-    }).sort((a, b) => b.growth - a.growth);
+        const currentSales = calculateCatSales(currentOrders);
+        const lastSales = calculateCatSales(lastOrders);
+
+        return Object.keys(currentSales)
+            .map((cat) => {
+                const current = currentSales[cat] || 0;
+                const last = lastSales[cat] || 0;
+                const change = last > 0 ? ((current - last) / last) * 100 : 100;
+                return { name: cat, growth: Math.round(change), current, last };
+            })
+            .sort((a, b) => b.growth - a.growth);
+    });
 
     res.status(200).json(new ApiResponse(200, growth));
 });
@@ -219,28 +251,28 @@ export const getRetentionTrends = asyncHandler(async (req: TenantRequest, res: R
         const monthStart = dayjs().subtract(i, 'month').startOf('month').toDate();
         const monthEnd = dayjs().subtract(i, 'month').endOf('month').toDate();
 
-        const orders = await Order.find({ 
-            storeId, 
-            createdAt: { $gte: monthStart, $lte: monthEnd }, 
-            status: 'Completed' 
+        const orders = await Order.find({
+            storeId,
+            createdAt: { $gte: monthStart, $lte: monthEnd },
+            status: 'Completed',
         });
 
         const customerOrderCounts: Record<string, number> = {};
-        orders.forEach(o => {
+        orders.forEach((o) => {
             if (o.customer) {
                 const cid = o.customer.toString();
                 customerOrderCounts[cid] = (customerOrderCounts[cid] || 0) + 1;
             }
         });
 
-        const repeat = Object.values(customerOrderCounts).filter(c => c > 1).length;
+        const repeat = Object.values(customerOrderCounts).filter((c) => c > 1).length;
         const total = Object.keys(customerOrderCounts).length;
 
         trends.push({
             month: dayjs(monthStart).format('MMM'),
             newCustomers: total - repeat,
             returningCustomers: repeat,
-            total
+            total,
         });
     }
 

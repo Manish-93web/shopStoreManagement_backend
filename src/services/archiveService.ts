@@ -2,14 +2,18 @@ import mongoose from 'mongoose';
 import ArchiveJob from '../models/ArchiveJob.js';
 import Order from '../models/Order.js';
 import Notification from '../models/Notification.js';
-import ActivityLog from '../models/ActivityLog.js';
+import AuditLog from '../models/AuditLog.js';
 import dayjs from 'dayjs';
 
 export const archiveService = {
     /**
      * Archive old orders (older than 1 year)
      */
-    archiveOldOrders: async (storeId: mongoose.Types.ObjectId, userId: mongoose.Types.ObjectId, months: number = 12) => {
+    archiveOldOrders: async (
+        storeId: mongoose.Types.ObjectId,
+        userId: mongoose.Types.ObjectId,
+        months: number = 12
+    ) => {
         const thresholdDate = dayjs().subtract(months, 'months').toDate();
 
         const job = await ArchiveJob.create({
@@ -17,7 +21,7 @@ export const archiveService = {
             collectionName: 'Orders',
             dateRange: { from: new Date(0), to: thresholdDate },
             status: 'Running',
-            triggeredBy: userId
+            triggeredBy: userId,
         });
 
         try {
@@ -26,7 +30,7 @@ export const archiveService = {
             // Here we'll count how many would be archived
             const count = await Order.countDocuments({
                 storeId,
-                createdAt: { $lt: thresholdDate }
+                createdAt: { $lt: thresholdDate },
             });
 
             // Re-implementing simplified logic: deletion/movement would go here
@@ -52,19 +56,22 @@ export const archiveService = {
         await Notification.deleteMany({
             storeId,
             read: true,
-            createdAt: { $lt: thresholdDate }
+            createdAt: { $lt: thresholdDate },
         });
     },
 
     /**
-     * Archive audit/activity logs (older than 6 months)
+     * Archive audit logs (older than 6 months). Previously targeted the unused
+     * ActivityLog model (nothing in the app ever writes to it, so this silently
+     * cleaned up nothing every week) — AuditLog is the model every write path
+     * actually uses.
      */
     archiveLogs: async (storeId: mongoose.Types.ObjectId) => {
         const thresholdDate = dayjs().subtract(6, 'months').toDate();
         // Move to Archive or compress
-        await ActivityLog.deleteMany({
+        await AuditLog.deleteMany({
             storeId,
-            createdAt: { $lt: thresholdDate }
+            createdAt: { $lt: thresholdDate },
         });
-    }
+    },
 };

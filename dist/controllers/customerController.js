@@ -1,5 +1,8 @@
+import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
 import Order from '../models/Order.js';
+import Wallet from '../models/Wallet.js';
+import AuditLog from '../models/AuditLog.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import ExcelJS from 'exceljs';
@@ -20,6 +23,14 @@ export const updateLoyaltyPoints = asyncHandler(async (req, res) => {
         : customer.loyaltyPoints - points;
     customer.loyaltyPoints = newPoints;
     await customer.save();
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: action === 'add' ? 'LOYALTY_POINTS_ADDED' : 'LOYALTY_POINTS_REDEEMED',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `${action === 'add' ? 'Added' : 'Redeemed'} ${points} loyalty points. New balance: ${newPoints}`
+    });
     res.status(200).json(new ApiResponse(200, customer, `Points ${action}ed successfully`));
 });
 // @desc    Get all customers
@@ -28,18 +39,27 @@ export const getCustomers = asyncHandler(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
-    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}`;
+    const search = req.query.search?.trim();
+    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}:s${search || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached)
             return res.status(200).json(new ApiResponse(200, JSON.parse(cached), "Customers from cache"));
     }
-    const customers = await Customer.find({ storeId: req.tenantId })
+    const query = { storeId: req.tenantId };
+    if (search) {
+        query.$or = [
+            { name: { $regex: search, $options: 'i' } },
+            { phone: { $regex: search, $options: 'i' } },
+            { email: { $regex: search, $options: 'i' } },
+        ];
+    }
+    const customers = await Customer.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean();
-    const total = await Customer.countDocuments({ storeId: req.tenantId });
+    const total = await Customer.countDocuments(query);
     const response = {
         customers,
         pagination: {
@@ -58,6 +78,14 @@ export const getCustomers = asyncHandler(async (req, res) => {
 // @route   POST /api/customers
 export const createCustomer = asyncHandler(async (req, res) => {
     const customer = await Customer.create({ ...req.body, storeId: req.tenantId });
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'CREATED_CUSTOMER',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `Created customer ${customer.name}`
+    });
     res.status(201).json(new ApiResponse(201, customer));
 });
 // @desc    Get customer by ID with purchase history
@@ -75,10 +103,15 @@ export const getCustomerById = asyncHandler(async (req, res) => {
         { $match: { customer: customer._id, storeId: req.tenantId, status: 'Completed' } },
         { $group: { _id: null, total: { $sum: "$grandTotal" } } }
     ]);
+    const activityLog = await AuditLog.find({ storeId: req.tenantId, entity: 'Customer', entityId: customer._id })
+        .populate('userId', 'name')
+        .sort({ createdAt: -1 })
+        .limit(20);
     res.status(200).json(new ApiResponse(200, {
         ...customer.toObject(),
         recentOrders,
         totalSpend: totalSpend[0]?.total || 0,
+        activityLog,
     }));
 });
 // @desc    Update customer details (notes, tags, segment, etc.)
@@ -88,6 +121,14 @@ export const updateCustomer = asyncHandler(async (req, res) => {
     if (!customer) {
         return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
     }
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'UPDATED_CUSTOMER',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `Updated customer ${customer.name}`
+    });
     res.status(200).json(new ApiResponse(200, customer, "Customer updated successfully"));
 });
 // @desc    Delete a customer
@@ -97,28 +138,74 @@ export const deleteCustomer = asyncHandler(async (req, res) => {
     if (!customer) {
         return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
     }
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'DELETED_CUSTOMER',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `Deleted customer ${customer.name}`
+    });
     res.status(200).json(new ApiResponse(200, null, "Customer deleted successfully"));
 });
-// @desc    Update customer wallet balance
+// @desc    Update customer wallet balance — routes through the real Wallet ledger
+//          (matches the pattern already used by checkout/refunds) instead of writing
+//          only to the legacy Customer.walletBalance mirror field.
 // @route   POST /api/customers/:id/wallet
 export const updateWalletBalance = asyncHandler(async (req, res) => {
-    const { amount, action } = req.body; // action: 'add' or 'deduct'
+    const { amount, action, reason } = req.body; // action: 'add' or 'deduct'
     if (!amount || amount <= 0) {
         return res.status(400).json(new ApiResponse(400, null, "Invalid amount"));
     }
-    const customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId });
-    if (!customer) {
-        return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
+    if (action !== 'add' && action !== 'deduct') {
+        return res.status(400).json(new ApiResponse(400, null, "action must be 'add' or 'deduct'"));
     }
-    if (action === 'deduct' && customer.walletBalance < amount) {
-        return res.status(400).json(new ApiResponse(400, null, "Insufficient wallet balance"));
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    let customer;
+    try {
+        customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId }).session(session);
+        if (!customer) {
+            await session.abortTransaction();
+            return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
+        }
+        if (action === 'deduct' && customer.walletBalance < amount) {
+            await session.abortTransaction();
+            return res.status(400).json(new ApiResponse(400, null, "Insufficient wallet balance"));
+        }
+        const delta = action === 'add' ? amount : -amount;
+        const newBalance = customer.walletBalance + delta;
+        customer.walletBalance = newBalance;
+        await customer.save({ session });
+        await Wallet.findOneAndUpdate({ customer: customer._id, storeId: req.tenantId }, {
+            $inc: { balance: delta },
+            $push: {
+                transactions: {
+                    type: action === 'add' ? 'CREDIT' : 'DEBIT',
+                    amount,
+                    reason: reason || `Manual ${action} by ${req.user?.name || 'Staff'}`,
+                    date: new Date()
+                }
+            }
+        }, { session, upsert: true });
+        await AuditLog.create([{
+                userId: req.user?._id,
+                storeId: req.tenantId,
+                action: action === 'add' ? 'WALLET_TOPUP' : 'WALLET_DEDUCT',
+                entity: 'Customer',
+                entityId: customer._id,
+                details: `${action === 'add' ? 'Added' : 'Deducted'} ${amount} to wallet${reason ? ` — ${reason}` : ''}. New balance: ${newBalance}`
+            }], { session });
+        await session.commitTransaction();
     }
-    const newBalance = action === 'add'
-        ? customer.walletBalance + amount
-        : customer.walletBalance - amount;
-    customer.walletBalance = newBalance;
-    await customer.save();
-    res.status(200).json(new ApiResponse(200, customer, `Wallet ${action}ed successfully. New Balance: ${newBalance}`));
+    catch (err) {
+        await session.abortTransaction();
+        throw err;
+    }
+    finally {
+        session.endSession();
+    }
+    res.status(200).json(new ApiResponse(200, customer, `Wallet ${action}ed successfully. New Balance: ${customer.walletBalance}`));
 });
 // @desc    Get top-level customer CRM analytics
 // @route   GET /api/customers/analytics/summary

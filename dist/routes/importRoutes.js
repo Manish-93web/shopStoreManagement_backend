@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { importController } from '../controllers/importController.js';
 import multer from 'multer';
 const storage = multer.memoryStorage();
@@ -22,6 +23,6 @@ const upload = multer({
     }
 });
 const router = express.Router();
-router.use(protect, tenantHandler);
-router.post('/products', protect, authorize('STORE_OWNER', 'ADMIN'), upload.single('file'), importController.importProducts);
+router.use(protect, tenantHandler, checkTrialExpiry);
+router.post('/products', protect, authorize('STORE_OWNER', 'SUPER_ADMIN'), upload.single('file'), importController.importProducts);
 export default router;

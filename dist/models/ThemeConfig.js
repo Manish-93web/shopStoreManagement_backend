@@ -7,7 +7,7 @@ const ThemeConfigSchema = new Schema({
     textColor: { type: String, default: '#f8fafc' }, // Near-white
     logoUrl: { type: String },
     faviconUrl: { type: String },
-    brandName: { type: String, default: 'RetailSync' },
+    brandName: { type: String, default: 'Store360' },
     fontFamily: { type: String, default: 'Inter' },
     borderRadius: { type: String, default: '0.75rem' }, // 12px rounded
 }, { timestamps: true });

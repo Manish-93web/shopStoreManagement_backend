@@ -1,11 +1,13 @@
 import User, { UserRole } from '../models/User.js';
 import Store from '../models/Store.js';
+import Plan from '../models/Plan.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt.js';
 import { logAudit } from '../utils/auditLogger.js';
 import jwt from 'jsonwebtoken';
 import OTP from '../models/OTP.js';
+import { sendEmail } from '../utils/emailService.js';
 // @desc    Register a new store and owner
 // @route   POST /api/auth/register
 // @access  Public
@@ -23,10 +25,12 @@ export const register = asyncHandler(async (req, res) => {
         role: UserRole.STORE_OWNER
     });
     // Create Initial Store
+    const freePlan = await Plan.findOne({ name: 'Free' });
     const store = await Store.create({
         name: storeName,
         shopType,
-        owner: user._id
+        owner: user._id,
+        subscriptionPlan: freePlan?._id
     });
     user.stores.push(store._id);
     user.storeId = store._id;
@@ -142,15 +146,23 @@ export const refreshToken = asyncHandler(async (req, res) => {
 export const forgotPassword = asyncHandler(async (req, res) => {
     const { email } = req.body;
     const user = await User.findOne({ email });
+    // Always return the same generic response whether or not the account exists —
+    // returning 404 for unknown emails lets an attacker enumerate registered accounts.
+    const genericResponse = () => res.status(200).json(new ApiResponse(200, null, "If an account exists for that email, a password reset code has been sent."));
     if (!user) {
-        return res.status(404).json(new ApiResponse(404, null, "User not found"));
+        return genericResponse();
     }
-    // Reuse OTP logic for email (MOCK)
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     await OTP.findOneAndUpdate({ phone: `email:${email}` }, { code, expiresAt }, { upsert: true, returnDocument: 'after' });
-    console.log(`[AUTH] Password Reset OTP for ${email}: ${code}`);
-    res.status(200).json(new ApiResponse(200, null, "Password reset code sent to your email (Check console)"));
+    // Real email send when SMTP is configured; emailService.ts itself logs the code
+    // to the console as an honest fallback when it isn't.
+    await sendEmail({
+        to: email,
+        subject: 'Your Store360 password reset code',
+        html: `<p>Your password reset code is <strong>${code}</strong>. It expires in 10 minutes.</p><p>If you didn't request this, you can ignore this email.</p>`
+    });
+    genericResponse();
 });
 // @desc    Reset Password
 // @route   POST /api/auth/reset-password

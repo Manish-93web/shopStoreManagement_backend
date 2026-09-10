@@ -1,17 +1,13 @@
 import nodemailer from 'nodemailer';
+let transporter = null;
 export const sendEmail = async (options) => {
     try {
-        const transporter = nodemailer.createTransport({
-            host: process.env.SMTP_HOST || 'smtp.mailtrap.io',
-            port: Number(process.env.SMTP_PORT) || 2525,
-            auth: {
-                user: process.env.SMTP_USER || 'testuser',
-                pass: process.env.SMTP_PASS || 'testpass',
-            },
-        });
-        // Enhanced logging for templates
-        if (process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST) {
+        const host = process.env.SMTP_HOST;
+        const user = process.env.SMTP_USER;
+        const pass = process.env.SMTP_PASS;
+        if (!host || !user || !pass) {
             console.log("-----------------------------------------");
+            console.log(`[EMAIL NOT CONFIGURED] Set SMTP_HOST/SMTP_USER/SMTP_PASS to send real email.`);
             console.log(`[EMAIL] To: ${options.to}`);
             console.log(`[EMAIL] Subject: ${options.subject}`);
             if (options.templateName) {
@@ -19,7 +15,14 @@ export const sendEmail = async (options) => {
             }
             console.log(`[EMAIL] Body length: ${options.html.length} chars`);
             console.log("-----------------------------------------");
-            return true;
+            return false;
+        }
+        if (!transporter) {
+            transporter = nodemailer.createTransport({
+                host,
+                port: Number(process.env.SMTP_PORT) || 587,
+                auth: { user, pass },
+            });
         }
         await transporter.sendMail({
             from: process.env.SMTP_FROM || 'noreply@retailsync.com',

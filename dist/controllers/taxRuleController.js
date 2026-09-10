@@ -21,3 +21,11 @@ export const updateTaxRule = asyncHandler(async (req, res) => {
         return res.status(404).json(new ApiResponse(404, null, 'Tax rule not found'));
     res.status(200).json(new ApiResponse(200, rule, 'Tax rule updated'));
 });
+// @desc    Delete tax rule
+// @route   DELETE /api/tax-rules/:id
+export const deleteTaxRule = asyncHandler(async (req, res) => {
+    const rule = await TaxRule.findOneAndDelete({ _id: req.params.id, storeId: req.tenantId });
+    if (!rule)
+        return res.status(404).json(new ApiResponse(404, null, 'Tax rule not found'));
+    res.status(200).json(new ApiResponse(200, null, 'Tax rule deleted'));
+});

@@ -2,9 +2,10 @@ import express from 'express';
 import { getBrands, createBrand, updateBrand, deleteBrand } from '../controllers/brandController.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 const router = express.Router();
 router.use(protect);
-router.use(tenantHandler);
+router.use(tenantHandler, checkTrialExpiry);
 router.route('/')
     .get(getBrands)
     .post(authorize('STORE_OWNER', 'MANAGER'), createBrand);

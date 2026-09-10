@@ -11,6 +11,8 @@ import { initBackupCron } from './services/backupService.js';
 import cron from 'node-cron';
 import Store from './models/Store.js';
 import { archiveService } from './services/archiveService.js';
+import { initReportScheduler } from './utils/scheduler.js';
+import { runDailyInventoryChecks } from './jobs/inventoryCheckJob.js';
 
 import { initNotificationWorker } from './workers/notificationWorker.js';
 
@@ -30,10 +32,26 @@ export const initArchiveCronJob = () => {
     });
 };
 
+// runDailyInventoryChecks (low-stock + expiring-batch alerts) was fully implemented
+// but never registered anywhere — same class of dead-scheduler bug already found and
+// fixed for the report scheduler above.
+export const initInventoryCheckCron = () => {
+    // Run daily at 1 AM
+    cron.schedule('0 1 * * *', async () => {
+        try {
+            await runDailyInventoryChecks();
+        } catch (error) {
+            console.error('Inventory check cron failed:', error);
+        }
+    });
+};
+
 // Initialize Workers
 initNotificationWorker();
 initBackupCron();
 initArchiveCronJob();
+initReportScheduler();
+initInventoryCheckCron();
 
 const PORT = process.env.PORT || 5000;
 const httpServer = createServer(app);

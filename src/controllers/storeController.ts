@@ -20,25 +20,50 @@ export const getMyStores = asyncHandler(async (req: any, res: Response) => {
     res.status(200).json(new ApiResponse(200, stores));
 });
 
+// @desc    Get the current tenant's store (any authenticated staff, not just the owner —
+//          used by POS/receipts to print real store name/address/GSTIN)
+// @route   GET /api/stores/current
+export const getCurrentStore = asyncHandler(async (req: any, res: Response) => {
+    if (!req.tenantId) {
+        return res.status(400).json(new ApiResponse(400, null, 'Store ID is required'));
+    }
+    const store = await Store.findById(req.tenantId).select('name address state phone email logo currency gstin');
+    if (!store) {
+        return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
+    }
+    res.status(200).json(new ApiResponse(200, store));
+});
+
 // @desc    Create a new store (Owner)
 // @route   POST /api/stores
 export const createStore = asyncHandler(async (req: any, res: Response) => {
     // Check Plan Limits
     const user = await User.findById(req.user.id).populate({
         path: 'stores',
-        populate: { path: 'subscriptionPlan' }
+        populate: { path: 'subscriptionPlan' },
     });
 
     if (user) {
         let maxStores = 1; // Default for trial
         (user.stores as any).forEach((s: any) => {
-            if (s.subscriptionPlan && (s.subscriptionPlan.maxStores === 0 || s.subscriptionPlan.maxStores > maxStores)) {
+            if (
+                s.subscriptionPlan &&
+                (s.subscriptionPlan.maxStores === 0 || s.subscriptionPlan.maxStores > maxStores)
+            ) {
                 maxStores = s.subscriptionPlan.maxStores;
             }
         });
 
         if (maxStores !== 0 && user.stores.length >= maxStores) {
-            return res.status(403).json(new ApiResponse(403, null, `Store limit reached. Your current plan allows up to ${maxStores} stores.`));
+            return res
+                .status(403)
+                .json(
+                    new ApiResponse(
+                        403,
+                        null,
+                        `Store limit reached. Your current plan allows up to ${maxStores} stores.`
+                    )
+                );
         }
     }
 
@@ -56,19 +81,19 @@ export const createStore = asyncHandler(async (req: any, res: Response) => {
         currency,
         timezone,
         owner: req.user.id,
-        subscriptionPlan: freePlan?._id
+        subscriptionPlan: freePlan?._id,
     });
 
     // Initialize settings for the new store
     await Settings.create({
         storeId: store._id,
         currency: currency || { code: 'INR', symbol: '₹' },
-        timezone: timezone || 'Asia/Kolkata'
+        timezone: timezone || 'Asia/Kolkata',
     });
 
     await User.findByIdAndUpdate(req.user.id, { $addToSet: { stores: store._id } });
 
-    res.status(201).json(new ApiResponse(201, store, "Store created successfully"));
+    res.status(201).json(new ApiResponse(201, store, 'Store created successfully'));
 });
 
 // @desc    Update store details
@@ -77,20 +102,20 @@ export const updateStore = asyncHandler(async (req: any, res: Response) => {
     let store = await Store.findById(req.params.id);
 
     if (!store) {
-        return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
     }
 
     // Ensure only owner or super admin can update
     if (store.owner.toString() !== req.user.id && req.user.role !== 'SUPER_ADMIN') {
-        return res.status(403).json(new ApiResponse(403, null, "Not authorized to update this store"));
+        return res.status(403).json(new ApiResponse(403, null, 'Not authorized to update this store'));
     }
 
     store = await Store.findByIdAndUpdate(req.params.id, req.body, {
         returnDocument: 'after',
-        runValidators: true
+        runValidators: true,
     });
 
-    res.status(200).json(new ApiResponse(200, store, "Store updated successfully"));
+    res.status(200).json(new ApiResponse(200, store, 'Store updated successfully'));
 });
 
 // @desc    Toggle store active status
@@ -98,11 +123,13 @@ export const updateStore = asyncHandler(async (req: any, res: Response) => {
 export const toggleStoreStatus = asyncHandler(async (req: Request, res: Response) => {
     const store = await Store.findById(req.params.id);
     if (!store) {
-        return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
     }
 
     store.isActive = !store.isActive;
     await store.save();
 
-    res.status(200).json(new ApiResponse(200, store, `Store ${store.isActive ? 'activated' : 'suspended'} successfully`));
+    res.status(200).json(
+        new ApiResponse(200, store, `Store ${store.isActive ? 'activated' : 'suspended'} successfully`)
+    );
 });

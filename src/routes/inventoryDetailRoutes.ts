@@ -1,14 +1,17 @@
 import express from 'express';
 import { protect } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { inventoryDetailController } from '../controllers/inventoryDetailController.js';
 
 const router = express.Router();
 
-router.use(protect, tenantHandler);
+router.use(protect, tenantHandler, checkTrialExpiry);
 
 router.get('/batches', inventoryDetailController.getBatches);
+router.post('/batches', inventoryDetailController.createBatch);
 router.get('/serials', inventoryDetailController.getSerials);
+router.post('/serials', inventoryDetailController.createSerials);
 router.put('/serials/status', inventoryDetailController.updateSerialStatus);
 router.get('/history', inventoryDetailController.getStockHistory);
 router.get('/low-stock', inventoryDetailController.getLowStockAlerts);

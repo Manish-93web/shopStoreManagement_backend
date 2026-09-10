@@ -1,6 +1,9 @@
 import { Response } from 'express';
+import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
 import Order from '../models/Order.js';
+import Wallet from '../models/Wallet.js';
+import AuditLog from '../models/AuditLog.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
@@ -14,19 +17,26 @@ export const updateLoyaltyPoints = asyncHandler(async (req: TenantRequest, res: 
 
     const customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId });
     if (!customer) {
-        return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
     }
 
     if (action === 'redeem' && customer.loyaltyPoints < points) {
-        return res.status(400).json(new ApiResponse(400, null, "Insufficient points"));
+        return res.status(400).json(new ApiResponse(400, null, 'Insufficient points'));
     }
 
-    const newPoints = action === 'add'
-        ? customer.loyaltyPoints + points
-        : customer.loyaltyPoints - points;
+    const newPoints = action === 'add' ? customer.loyaltyPoints + points : customer.loyaltyPoints - points;
 
     customer.loyaltyPoints = newPoints;
     await customer.save();
+
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: action === 'add' ? 'LOYALTY_POINTS_ADDED' : 'LOYALTY_POINTS_REDEEMED',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `${action === 'add' ? 'Added' : 'Redeemed'} ${points} loyalty points. New balance: ${newPoints}`,
+    });
 
     res.status(200).json(new ApiResponse(200, customer, `Points ${action}ed successfully`));
 });
@@ -37,20 +47,26 @@ export const getCustomers = asyncHandler(async (req: TenantRequest, res: Respons
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
     const skip = (page - 1) * limit;
+    const search = (req.query.search as string)?.trim();
 
-    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}`;
+    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}:s${search || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
-        if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), "Customers from cache"));
+        if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), 'Customers from cache'));
     }
 
-    const customers = await Customer.find({ storeId: req.tenantId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean();
+    const query: any = { storeId: req.tenantId };
+    if (search) {
+        query.$or = [
+            { name: { $regex: search, $options: 'i' } },
+            { phone: { $regex: search, $options: 'i' } },
+            { email: { $regex: search, $options: 'i' } },
+        ];
+    }
 
-    const total = await Customer.countDocuments({ storeId: req.tenantId });
+    const customers = await Customer.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+
+    const total = await Customer.countDocuments(query);
 
     const response = {
         customers,
@@ -58,8 +74,8 @@ export const getCustomers = asyncHandler(async (req: TenantRequest, res: Respons
             total,
             page,
             limit,
-            pages: Math.ceil(total / limit)
-        }
+            pages: Math.ceil(total / limit),
+        },
     };
 
     if (process.env.SKIP_REDIS !== 'true') {
@@ -73,6 +89,16 @@ export const getCustomers = asyncHandler(async (req: TenantRequest, res: Respons
 // @route   POST /api/customers
 export const createCustomer = asyncHandler(async (req: TenantRequest, res: Response) => {
     const customer = await Customer.create({ ...req.body, storeId: req.tenantId });
+
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'CREATED_CUSTOMER',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `Created customer ${customer.name}`,
+    });
+
     res.status(201).json(new ApiResponse(201, customer));
 });
 
@@ -81,7 +107,7 @@ export const createCustomer = asyncHandler(async (req: TenantRequest, res: Respo
 export const getCustomerById = asyncHandler(async (req: TenantRequest, res: Response) => {
     const customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId });
     if (!customer) {
-        return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
     }
 
     // Fetch recent orders associated with this customer
@@ -91,14 +117,22 @@ export const getCustomerById = asyncHandler(async (req: TenantRequest, res: Resp
 
     const totalSpend = await Order.aggregate([
         { $match: { customer: customer._id, storeId: req.tenantId, status: 'Completed' } },
-        { $group: { _id: null, total: { $sum: "$grandTotal" } } }
+        { $group: { _id: null, total: { $sum: '$grandTotal' } } },
     ]);
 
-    res.status(200).json(new ApiResponse(200, {
-        ...customer.toObject(),
-        recentOrders,
-        totalSpend: totalSpend[0]?.total || 0,
-    }));
+    const activityLog = await AuditLog.find({ storeId: req.tenantId, entity: 'Customer', entityId: customer._id })
+        .populate('userId', 'name')
+        .sort({ createdAt: -1 })
+        .limit(20);
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            ...customer.toObject(),
+            recentOrders,
+            totalSpend: totalSpend[0]?.total || 0,
+            activityLog,
+        })
+    );
 });
 
 // @desc    Update customer details (notes, tags, segment, etc.)
@@ -111,10 +145,19 @@ export const updateCustomer = asyncHandler(async (req: TenantRequest, res: Respo
     );
 
     if (!customer) {
-        return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
     }
 
-    res.status(200).json(new ApiResponse(200, customer, "Customer updated successfully"));
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'UPDATED_CUSTOMER',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `Updated customer ${customer.name}`,
+    });
+
+    res.status(200).json(new ApiResponse(200, customer, 'Customer updated successfully'));
 });
 
 // @desc    Delete a customer
@@ -122,37 +165,97 @@ export const updateCustomer = asyncHandler(async (req: TenantRequest, res: Respo
 export const deleteCustomer = asyncHandler(async (req: TenantRequest, res: Response) => {
     const customer = await Customer.findOneAndDelete({ _id: req.params.id, storeId: req.tenantId });
     if (!customer) {
-        return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
     }
-    res.status(200).json(new ApiResponse(200, null, "Customer deleted successfully"));
+
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'DELETED_CUSTOMER',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `Deleted customer ${customer.name}`,
+    });
+
+    res.status(200).json(new ApiResponse(200, null, 'Customer deleted successfully'));
 });
 
-// @desc    Update customer wallet balance
+// @desc    Update customer wallet balance — routes through the real Wallet ledger
+//          (matches the pattern already used by checkout/refunds) instead of writing
+//          only to the legacy Customer.walletBalance mirror field.
 // @route   POST /api/customers/:id/wallet
 export const updateWalletBalance = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { amount, action } = req.body; // action: 'add' or 'deduct'
+    const { amount, action, reason } = req.body; // action: 'add' or 'deduct'
 
     if (!amount || amount <= 0) {
-        return res.status(400).json(new ApiResponse(400, null, "Invalid amount"));
+        return res.status(400).json(new ApiResponse(400, null, 'Invalid amount'));
+    }
+    if (action !== 'add' && action !== 'deduct') {
+        return res.status(400).json(new ApiResponse(400, null, "action must be 'add' or 'deduct'"));
     }
 
-    const customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId });
-    if (!customer) {
-        return res.status(404).json(new ApiResponse(404, null, "Customer not found"));
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    let customer;
+    try {
+        customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId }).session(session);
+        if (!customer) {
+            await session.abortTransaction();
+            return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
+        }
+
+        if (action === 'deduct' && customer.walletBalance < amount) {
+            await session.abortTransaction();
+            return res.status(400).json(new ApiResponse(400, null, 'Insufficient wallet balance'));
+        }
+
+        const delta = action === 'add' ? amount : -amount;
+        const newBalance = customer.walletBalance + delta;
+
+        customer.walletBalance = newBalance;
+        await customer.save({ session });
+
+        await Wallet.findOneAndUpdate(
+            { customer: customer._id, storeId: req.tenantId },
+            {
+                $inc: { balance: delta },
+                $push: {
+                    transactions: {
+                        type: action === 'add' ? 'CREDIT' : 'DEBIT',
+                        amount,
+                        reason: reason || `Manual ${action} by ${req.user?.name || 'Staff'}`,
+                        date: new Date(),
+                    },
+                },
+            },
+            { session, upsert: true }
+        );
+
+        await AuditLog.create(
+            [
+                {
+                    userId: req.user?._id,
+                    storeId: req.tenantId,
+                    action: action === 'add' ? 'WALLET_TOPUP' : 'WALLET_DEDUCT',
+                    entity: 'Customer',
+                    entityId: customer._id,
+                    details: `${action === 'add' ? 'Added' : 'Deducted'} ${amount} to wallet${reason ? ` — ${reason}` : ''}. New balance: ${newBalance}`,
+                },
+            ],
+            { session }
+        );
+
+        await session.commitTransaction();
+    } catch (err) {
+        await session.abortTransaction();
+        throw err;
+    } finally {
+        session.endSession();
     }
 
-    if (action === 'deduct' && customer.walletBalance < amount) {
-        return res.status(400).json(new ApiResponse(400, null, "Insufficient wallet balance"));
-    }
-
-    const newBalance = action === 'add'
-        ? customer.walletBalance + amount
-        : customer.walletBalance - amount;
-
-    customer.walletBalance = newBalance;
-    await customer.save();
-
-    res.status(200).json(new ApiResponse(200, customer, `Wallet ${action}ed successfully. New Balance: ${newBalance}`));
+    res.status(200).json(
+        new ApiResponse(200, customer, `Wallet ${action}ed successfully. New Balance: ${customer.walletBalance}`)
+    );
 });
 
 // @desc    Get top-level customer CRM analytics
@@ -168,26 +271,28 @@ export const getCustomerAnalytics = asyncHandler(async (req: TenantRequest, res:
 
     const newCustomers = await Customer.countDocuments({
         storeId,
-        createdAt: { $gte: thirtyDaysAgo }
+        createdAt: { $gte: thirtyDaysAgo },
     });
 
     // Customers who bought more than once (Retention heuristic)
     const repeatBuyersAggr = await Order.aggregate([
         { $match: { storeId, status: 'Completed', customer: { $exists: true, $ne: null } } },
-        { $group: { _id: "$customer", purchaseCount: { $sum: 1 } } },
+        { $group: { _id: '$customer', purchaseCount: { $sum: 1 } } },
         { $match: { purchaseCount: { $gt: 1 } } },
-        { $count: "repeatBuyers" }
+        { $count: 'repeatBuyers' },
     ]);
     const repeatBuyersCount = repeatBuyersAggr[0]?.repeatBuyers || 0;
 
     const retentionRate = totalCustomers > 0 ? ((repeatBuyersCount / totalCustomers) * 100).toFixed(1) : 0;
 
-    res.status(200).json(new ApiResponse(200, {
-        totalCustomers,
-        newCustomers,
-        repeatBuyersCount,
-        retentionRate,
-    }));
+    res.status(200).json(
+        new ApiResponse(200, {
+            totalCustomers,
+            newCustomers,
+            repeatBuyersCount,
+            retentionRate,
+        })
+    );
 });
 
 // @desc    Export Customers to Excel
@@ -205,10 +310,10 @@ export const exportCustomers = asyncHandler(async (req: TenantRequest, res: Resp
         { header: 'Segment', key: 'segment', width: 15 },
         { header: 'Loyalty Points', key: 'loyaltyPoints', width: 15 },
         { header: 'Wallet Balance', key: 'walletBalance', width: 15 },
-        { header: 'Notes', key: 'notes', width: 30 }
+        { header: 'Notes', key: 'notes', width: 30 },
     ];
 
-    customers.forEach(customer => {
+    customers.forEach((customer) => {
         worksheet.addRow({
             name: customer.name,
             phone: customer.phone,
@@ -216,7 +321,7 @@ export const exportCustomers = asyncHandler(async (req: TenantRequest, res: Resp
             segment: customer.segment,
             loyaltyPoints: customer.loyaltyPoints,
             walletBalance: customer.walletBalance,
-            notes: customer.notes || ''
+            notes: customer.notes || '',
         });
     });
 
@@ -227,11 +332,11 @@ export const exportCustomers = asyncHandler(async (req: TenantRequest, res: Resp
     res.end();
 });
 
-// @desc    Import Customers from Excel 
+// @desc    Import Customers from Excel
 // @route   POST /api/customers/import
 export const importCustomers = asyncHandler(async (req: TenantRequest, res: Response) => {
     if (!req.file) {
-        return res.status(400).json(new ApiResponse(400, null, "Please upload an Excel file"));
+        return res.status(400).json(new ApiResponse(400, null, 'Please upload an Excel file'));
     }
 
     const workbook = new ExcelJS.Workbook();
@@ -242,7 +347,8 @@ export const importCustomers = asyncHandler(async (req: TenantRequest, res: Resp
     const storeId = req.tenantId;
 
     worksheet.eachRow((row, rowNumber) => {
-        if (rowNumber > 1) { // Skip Header
+        if (rowNumber > 1) {
+            // Skip Header
             const phone = row.getCell(2).value?.toString() || '';
             if (phone) {
                 customersToInsert.push({
@@ -251,26 +357,28 @@ export const importCustomers = asyncHandler(async (req: TenantRequest, res: Resp
                     email: row.getCell(3).value?.toString() || undefined,
                     segment: row.getCell(4).value?.toString() || 'Retail',
                     notes: row.getCell(7).value?.toString() || '',
-                    storeId
+                    storeId,
                 });
             }
         }
     });
 
     if (customersToInsert.length === 0) {
-        return res.status(400).json(new ApiResponse(400, null, "No valid data found in file"));
+        return res.status(400).json(new ApiResponse(400, null, 'No valid data found in file'));
     }
 
     // Upsert logic (Match by phone + storeId)
-    const bulkOps = customersToInsert.map(cust => ({
+    const bulkOps = customersToInsert.map((cust) => ({
         updateOne: {
             filter: { phone: cust.phone, storeId: cust.storeId },
             update: { $set: cust },
-            upsert: true
-        }
+            upsert: true,
+        },
     }));
 
     await Customer.bulkWrite(bulkOps);
 
-    res.status(200).json(new ApiResponse(200, { imported: customersToInsert.length }, "Customers imported successfully"));
+    res.status(200).json(
+        new ApiResponse(200, { imported: customersToInsert.length }, 'Customers imported successfully')
+    );
 });

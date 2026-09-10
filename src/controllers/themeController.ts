@@ -10,15 +10,17 @@ export const getTheme = asyncHandler(async (req: TenantRequest, res: Response) =
     const theme = await ThemeConfig.findOne({ storeId: req.tenantId });
     if (!theme) {
         // Return defaults if no theme set yet
-        return res.status(200).json(new ApiResponse(200, {
-            primaryColor: '#6366f1',
-            accentColor: '#8b5cf6',
-            backgroundColor: '#0f0f1a',
-            textColor: '#f8fafc',
-            brandName: 'RetailSync',
-            fontFamily: 'Inter',
-            borderRadius: '0.75rem'
-        }));
+        return res.status(200).json(
+            new ApiResponse(200, {
+                primaryColor: '#6366f1',
+                accentColor: '#8b5cf6',
+                backgroundColor: '#0f0f1a',
+                textColor: '#f8fafc',
+                brandName: 'Store360',
+                fontFamily: 'Inter',
+                borderRadius: '0.75rem',
+            })
+        );
     }
     res.status(200).json(new ApiResponse(200, theme));
 });
@@ -26,11 +28,22 @@ export const getTheme = asyncHandler(async (req: TenantRequest, res: Response) =
 // @desc    Save / update theme config for current tenant
 // @route   PUT /api/theme
 export const saveTheme = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius } = req.body;
+    const { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius } =
+        req.body;
 
     const theme = await ThemeConfig.findOneAndUpdate(
         { storeId: req.tenantId },
-        { primaryColor, accentColor, backgroundColor, textColor, logoUrl, brandName, fontFamily, borderRadius, storeId: req.tenantId },
+        {
+            primaryColor,
+            accentColor,
+            backgroundColor,
+            textColor,
+            logoUrl,
+            brandName,
+            fontFamily,
+            borderRadius,
+            storeId: req.tenantId,
+        },
         { upsert: true, returnDocument: 'after', runValidators: true }
     );
 

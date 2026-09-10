@@ -18,6 +18,29 @@ export const inventoryDetailController = {
         const batches = await InventoryBatch.find(query).sort({ expiryDate: 1 });
         res.status(200).json(new ApiResponse(200, batches));
     }),
+    // @desc    Record a new batch for stock on hand (manual entry, or called
+    //          from PO receiving when the received items include batch info)
+    createBatch: asyncHandler(async (req, res) => {
+        const { product, variant, batchNumber, quantity, costPrice, sellingPrice, manufacturingDate, expiryDate, supplier, purchaseOrder } = req.body;
+        if (!product || !batchNumber || quantity === undefined || costPrice === undefined) {
+            return res.status(400).json(new ApiResponse(400, null, "product, batchNumber, quantity, and costPrice are required"));
+        }
+        const batch = await InventoryBatch.create({
+            batchNumber,
+            product,
+            variant: variant || undefined,
+            storeId: req.tenantId,
+            supplier: supplier || undefined,
+            purchaseOrder: purchaseOrder || undefined,
+            initialQuantity: quantity,
+            currentQuantity: quantity,
+            costPrice,
+            sellingPrice: sellingPrice || undefined,
+            manufacturingDate: manufacturingDate || undefined,
+            expiryDate: expiryDate || undefined,
+        });
+        res.status(201).json(new ApiResponse(201, batch, "Batch recorded"));
+    }),
     // @desc    Get serial numbers for a product
     getSerials: asyncHandler(async (req, res) => {
         const { productId, variantId } = req.query;
@@ -30,6 +53,37 @@ export const inventoryDetailController = {
             query.variant = variantId;
         const serials = await ProductSerial.find(query);
         res.status(200).json(new ApiResponse(200, serials));
+    }),
+    // @desc    Record one or more serial numbers for stock on hand
+    //          (accepts a single serialNumber or a serialNumbers[] array —
+    //          serialized units are usually added several at a time)
+    createSerials: asyncHandler(async (req, res) => {
+        const { product, variant, batch, warrantyExpiry } = req.body;
+        const serialNumbers = req.body.serialNumbers || (req.body.serialNumber ? [req.body.serialNumber] : []);
+        if (!product || serialNumbers.length === 0) {
+            return res.status(400).json(new ApiResponse(400, null, "product and at least one serial number are required"));
+        }
+        const docs = serialNumbers.map((serialNumber) => ({
+            serialNumber,
+            product,
+            variant: variant || undefined,
+            storeId: req.tenantId,
+            batch: batch || undefined,
+            warrantyExpiry: warrantyExpiry || undefined,
+            history: [{ action: 'Added to stock', date: new Date() }],
+        }));
+        try {
+            const created = await ProductSerial.insertMany(docs, { ordered: false });
+            res.status(201).json(new ApiResponse(201, created, `${created.length} serial number(s) recorded`));
+        }
+        catch (err) {
+            // insertMany with ordered:false still throws on any failure (e.g. duplicate
+            // serial) after inserting the valid ones — report what succeeded.
+            if (err.insertedDocs?.length) {
+                return res.status(207).json(new ApiResponse(207, err.insertedDocs, `${err.insertedDocs.length} recorded, some were duplicates and skipped`));
+            }
+            throw err;
+        }
     }),
     // @desc    Update serial status
     updateSerialStatus: asyncHandler(async (req, res) => {

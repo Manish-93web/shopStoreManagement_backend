@@ -2,6 +2,8 @@ import Transfer from '../models/Transfer.js';
 import Inventory from '../models/Inventory.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
+import { bumpCacheVersion } from '../config/redis.js';
+import { emitToStore } from '../config/socket.js';
 // @desc    Create a stock transfer request
 // @route   POST /api/transfers
 export const createTransfer = asyncHandler(async (req, res) => {
@@ -37,8 +39,14 @@ export const shipTransfer = asyncHandler(async (req, res) => {
     }
     // Reduce inventory from 'fromStore'
     for (const item of transfer.items) {
-        await Inventory.findOneAndUpdate({ product: item.product, variant: item.variant, store: req.tenantId }, { $inc: { quantity: -item.quantity } });
+        const inv = await Inventory.findOneAndUpdate({ product: item.product, variant: item.variant, store: req.tenantId }, { $inc: { quantity: -item.quantity } }, { new: true });
+        emitToStore(req.tenantId.toString(), 'inventory-update', {
+            productId: item.product,
+            variantId: item.variant,
+            newQuantity: inv?.quantity
+        });
     }
+    await bumpCacheVersion(req.tenantId.toString());
     transfer.status = 'Shipped';
     transfer.shippedAt = new Date();
     transfer.shippedBy = req.user._id;
@@ -54,8 +62,14 @@ export const receiveTransfer = asyncHandler(async (req, res) => {
     }
     // Increase inventory at 'toStore'
     for (const item of transfer.items) {
-        await Inventory.findOneAndUpdate({ product: item.product, variant: item.variant, store: req.tenantId }, { $inc: { quantity: item.quantity } }, { upsert: true });
+        const inv = await Inventory.findOneAndUpdate({ product: item.product, variant: item.variant, store: req.tenantId }, { $inc: { quantity: item.quantity } }, { upsert: true, new: true });
+        emitToStore(req.tenantId.toString(), 'inventory-update', {
+            productId: item.product,
+            variantId: item.variant,
+            newQuantity: inv?.quantity
+        });
     }
+    await bumpCacheVersion(req.tenantId.toString());
     transfer.status = 'Received';
     transfer.receivedAt = new Date();
     transfer.receivedBy = req.user._id;

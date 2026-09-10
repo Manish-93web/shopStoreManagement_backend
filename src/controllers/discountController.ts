@@ -14,18 +14,20 @@ export const validateDiscount = asyncHandler(async (req: TenantRequest, res: Res
         storeId: req.tenantId,
         isActive: true,
         startDate: { $lte: new Date() },
-        endDate: { $gte: new Date() }
+        endDate: { $gte: new Date() },
     });
 
     if (!discount) {
-        return res.status(404).json(new ApiResponse(404, null, "Invalid or expired coupon"));
+        return res.status(404).json(new ApiResponse(404, null, 'Invalid or expired coupon'));
     }
 
     if (amount < (discount.minPurchase || 0)) {
-        return res.status(400).json(new ApiResponse(400, null, `Minimum purchase of ₹${discount.minPurchase} required`));
+        return res
+            .status(400)
+            .json(new ApiResponse(400, null, `Minimum purchase of ₹${discount.minPurchase} required`));
     }
 
-    let discountAmount = 0;
+    let discountAmount: number;
     if (discount.type === 'Percentage') {
         discountAmount = (amount * discount.value) / 100;
         if (discount.maxDiscount && discountAmount > discount.maxDiscount) {
@@ -35,11 +37,17 @@ export const validateDiscount = asyncHandler(async (req: TenantRequest, res: Res
         discountAmount = discount.value;
     }
 
-    res.status(200).json(new ApiResponse(200, {
-        discountAmount,
-        code: discount.code,
-        type: discount.type
-    }, "Coupon applied"));
+    res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                discountAmount,
+                code: discount.code,
+                type: discount.type,
+            },
+            'Coupon applied'
+        )
+    );
 });
 
 // @desc    Create a new discount

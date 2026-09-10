@@ -18,7 +18,7 @@ export const validateDiscount = asyncHandler(async (req, res) => {
     if (amount < (discount.minPurchase || 0)) {
         return res.status(400).json(new ApiResponse(400, null, `Minimum purchase of ₹${discount.minPurchase} required`));
     }
-    let discountAmount = 0;
+    let discountAmount;
     if (discount.type === 'Percentage') {
         discountAmount = (amount * discount.value) / 100;
         if (discount.maxDiscount && discountAmount > discount.maxDiscount) {

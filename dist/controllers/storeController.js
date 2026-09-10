@@ -3,6 +3,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import Settings from '../models/Settings.js';
 import User from '../models/User.js';
+import Plan from '../models/Plan.js';
 // @desc    Get all stores (Super Admin only)
 // @route   GET /api/stores
 export const getStores = asyncHandler(async (req, res) => {
@@ -14,6 +15,19 @@ export const getStores = asyncHandler(async (req, res) => {
 export const getMyStores = asyncHandler(async (req, res) => {
     const stores = await Store.find({ owner: req.user.id });
     res.status(200).json(new ApiResponse(200, stores));
+});
+// @desc    Get the current tenant's store (any authenticated staff, not just the owner —
+//          used by POS/receipts to print real store name/address/GSTIN)
+// @route   GET /api/stores/current
+export const getCurrentStore = asyncHandler(async (req, res) => {
+    if (!req.tenantId) {
+        return res.status(400).json(new ApiResponse(400, null, "Store ID is required"));
+    }
+    const store = await Store.findById(req.tenantId).select('name address state phone email logo currency gstin');
+    if (!store) {
+        return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+    }
+    res.status(200).json(new ApiResponse(200, store));
 });
 // @desc    Create a new store (Owner)
 // @route   POST /api/stores
@@ -35,6 +49,8 @@ export const createStore = asyncHandler(async (req, res) => {
         }
     }
     const { name, shopType, address, phone, email, currency, timezone } = req.body;
+    // Auto-assign the Free plan to all new stores
+    const freePlan = await Plan.findOne({ name: 'Free', isActive: true });
     const store = await Store.create({
         name,
         shopType,
@@ -43,7 +59,8 @@ export const createStore = asyncHandler(async (req, res) => {
         email,
         currency,
         timezone,
-        owner: req.user.id
+        owner: req.user.id,
+        subscriptionPlan: freePlan?._id
     });
     // Initialize settings for the new store
     await Settings.create({
@@ -51,6 +68,7 @@ export const createStore = asyncHandler(async (req, res) => {
         currency: currency || { code: 'INR', symbol: '₹' },
         timezone: timezone || 'Asia/Kolkata'
     });
+    await User.findByIdAndUpdate(req.user.id, { $addToSet: { stores: store._id } });
     res.status(201).json(new ApiResponse(201, store, "Store created successfully"));
 });
 // @desc    Update store details

@@ -1,11 +1,12 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
+import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { startShift, getActiveShift, closeShift, getAllShifts } from '../controllers/shiftController.js';
 
 const router = express.Router();
 
-router.use(protect, tenantHandler);
+router.use(protect, tenantHandler, checkTrialExpiry);
 
 router.post('/start', startShift);
 router.get('/active', getActiveShift);

@@ -7,6 +7,8 @@ import Wallet from '../models/Wallet.js';
 import Customer from '../models/Customer.js';
 import mongoose from 'mongoose';
 import { TenantRequest } from '../middleware/tenantHandler.js';
+import { bumpCacheVersion } from '../config/redis.js';
+import { emitToStore } from '../config/socket.js';
 
 export const returnController = {
     createReturn: async (req: TenantRequest, res: Response) => {
@@ -18,7 +20,7 @@ export const returnController = {
 
             // 1. Fetch original order
             const originalOrder = await Order.findById(originalOrderId);
-            if (!originalOrder) throw new Error("Original order not found");
+            if (!originalOrder) throw new Error('Original order not found');
 
             // 2. Generate Return Number
             const returnNumber = `RET-${Date.now()}`;
@@ -30,13 +32,13 @@ export const returnController = {
                 storeId,
                 customer: originalOrder.customer,
                 items,
-                subTotal: items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0),
-                taxTotal: items.reduce((acc: number, item: any) => acc + (item.tax * item.quantity), 0),
-                grandTotal: items.reduce((acc: number, item: any) => acc + ((item.price + item.tax) * item.quantity), 0),
+                subTotal: items.reduce((acc: number, item: any) => acc + item.price * item.quantity, 0),
+                taxTotal: items.reduce((acc: number, item: any) => acc + item.tax * item.quantity, 0),
+                grandTotal: items.reduce((acc: number, item: any) => acc + (item.price + item.tax) * item.quantity, 0),
                 refundAmount,
                 status: 'Received',
                 receivedBy: req.user?._id,
-                notes
+                notes,
             });
 
             await returnOrder.save({ session });
@@ -62,7 +64,7 @@ export const returnController = {
                     amount: refundAmount,
                     method: refundMethod || 'Cash',
                     status: 'Completed',
-                    performedBy: req.user?._id
+                    performedBy: req.user?._id,
                 });
                 await refund.save({ session });
 
@@ -70,22 +72,26 @@ export const returnController = {
                 if (refundMethod === 'Wallet' && originalOrder.customer) {
                     await Wallet.findOneAndUpdate(
                         { customer: originalOrder.customer, storeId },
-                        { 
+                        {
                             $inc: { balance: refundAmount },
-                            $push: { 
-                                transactions: { 
-                                    type: 'CREDIT', 
-                                    amount: refundAmount, 
+                            $push: {
+                                transactions: {
+                                    type: 'CREDIT',
+                                    amount: refundAmount,
                                     reason: `Refund for ${originalOrder.orderNumber}`,
-                                    date: new Date()
-                                } 
-                            }
+                                    date: new Date(),
+                                },
+                            },
                         },
                         { session, upsert: true }
                     );
-                    
+
                     // Update legacy loyalty field if needed (often used for simple balance display)
-                    await Customer.findByIdAndUpdate(originalOrder.customer, { $inc: { walletBalance: refundAmount } }, { session });
+                    await Customer.findByIdAndUpdate(
+                        originalOrder.customer,
+                        { $inc: { walletBalance: refundAmount } },
+                        { session }
+                    );
                 }
 
                 returnOrder.refundStatus = 'Processed';
@@ -93,6 +99,17 @@ export const returnController = {
             }
 
             await session.commitTransaction();
+
+            await bumpCacheVersion(storeId!.toString());
+            for (const item of items) {
+                const inv = await Inventory.findOne({ product: item.product, variant: item.variant, store: storeId });
+                emitToStore(storeId!.toString(), 'inventory-update', {
+                    productId: item.product,
+                    variantId: item.variant,
+                    newQuantity: inv?.quantity,
+                });
+            }
+
             res.status(201).json({ success: true, data: returnOrder });
         } catch (error: any) {
             await session.abortTransaction();
@@ -112,5 +129,5 @@ export const returnController = {
         } catch (error: any) {
             res.status(500).json({ success: false, message: error.message });
         }
-    }
+    },
 };

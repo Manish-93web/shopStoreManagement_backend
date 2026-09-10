@@ -5,6 +5,8 @@ import PaymentTransaction from '../models/PaymentTransaction.js';
 import Wallet from '../models/Wallet.js';
 import Customer from '../models/Customer.js';
 import mongoose from 'mongoose';
+import { bumpCacheVersion } from '../config/redis.js';
+import { emitToStore } from '../config/socket.js';
 export const returnController = {
     createReturn: async (req, res) => {
         const session = await mongoose.startSession();
@@ -73,6 +75,15 @@ export const returnController = {
                 await returnOrder.save({ session });
             }
             await session.commitTransaction();
+            await bumpCacheVersion(storeId.toString());
+            for (const item of items) {
+                const inv = await Inventory.findOne({ product: item.product, variant: item.variant, store: storeId });
+                emitToStore(storeId.toString(), 'inventory-update', {
+                    productId: item.product,
+                    variantId: item.variant,
+                    newQuantity: inv?.quantity
+                });
+            }
             res.status(201).json({ success: true, data: returnOrder });
         }
         catch (error) {

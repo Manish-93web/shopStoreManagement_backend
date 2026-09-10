@@ -4,6 +4,8 @@ const CustomerSchema = new Schema({
     phone: { type: String, required: true },
     email: { type: String },
     address: { type: String },
+    state: { type: String },
+    gstin: { type: String },
     loyaltyPoints: { type: Number, default: 0 },
     walletBalance: { type: Number, default: 0 },
     segment: { type: String, enum: ['Retail', 'Wholesale', 'VIP'], default: 'Retail' },

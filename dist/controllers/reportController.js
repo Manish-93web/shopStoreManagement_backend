@@ -3,31 +3,36 @@ import Inventory from '../models/Inventory.js';
 import Customer from '../models/Customer.js';
 import AuditLog from '../models/AuditLog.js';
 import StockAdjustment from '../models/StockAdjustment.js';
+import PurchaseOrder from '../models/PurchaseOrder.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { addReportJob } from '../queues/reportQueue.js';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
+import { withCache } from '../config/redis.js';
 // @desc    Get sales analytics for store
 // @route   GET /api/reports/sales
 export const getSalesReport = asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.query;
-    const query = { storeId: req.tenantId, status: 'Completed' };
-    if (startDate && endDate) {
-        query.createdAt = {
-            $gte: new Date(startDate),
-            $lte: new Date(endDate)
+    const cacheKey = `analytics:sales-report:${req.tenantId}:${startDate || ''}:${endDate || ''}`;
+    const { value: stats } = await withCache(cacheKey, 120, async () => {
+        const query = { storeId: req.tenantId, status: 'Completed' };
+        if (startDate && endDate) {
+            query.createdAt = {
+                $gte: new Date(startDate),
+                $lte: new Date(endDate)
+            };
+        }
+        const orders = await Order.find(query);
+        return {
+            totalRevenue: orders.reduce((acc, o) => acc + o.grandTotal, 0),
+            totalOrders: orders.length,
+            totalItemsSold: orders.reduce((acc, o) => acc + o.items.reduce((sum, i) => sum + i.quantity, 0), 0),
+            averageOrderValue: orders.length > 0 ? orders.reduce((acc, o) => acc + o.grandTotal, 0) / orders.length : 0,
+            taxTotal: orders.reduce((acc, o) => acc + (o.taxTotal || 0), 0),
+            discountTotal: orders.reduce((acc, o) => acc + (o.discountTotal || 0), 0)
         };
-    }
-    const orders = await Order.find(query);
-    const stats = {
-        totalRevenue: orders.reduce((acc, o) => acc + o.grandTotal, 0),
-        totalOrders: orders.length,
-        totalItemsSold: orders.reduce((acc, o) => acc + o.items.reduce((sum, i) => sum + i.quantity, 0), 0),
-        averageOrderValue: orders.length > 0 ? orders.reduce((acc, o) => acc + o.grandTotal, 0) / orders.length : 0,
-        taxTotal: orders.reduce((acc, o) => acc + (o.taxTotal || 0), 0),
-        discountTotal: orders.reduce((acc, o) => acc + (o.discountTotal || 0), 0)
-    };
+    });
     res.status(200).json(new ApiResponse(200, stats));
 });
 // @desc    Get profit and loss report
@@ -81,7 +86,11 @@ export const getTaxReport = asyncHandler(async (req, res) => {
 // @desc    Get inventory valuation report
 // @route   GET /api/reports/inventory
 export const getInventoryReport = asyncHandler(async (req, res) => {
-    const inventory = await Inventory.find({ store: req.tenantId }).populate('product');
+    const inventory = await Inventory.find({ store: req.tenantId })
+        .populate({ path: 'product', populate: { path: 'category', select: 'name' } });
+    const byCategory = {};
+    let lowStockCount = 0;
+    let outOfStockCount = 0;
     const stats = inventory.reduce((acc, item) => {
         const cost = (item.product?.costPrice || 0) * item.quantity;
         const value = (item.product?.price || 0) * item.quantity;
@@ -89,9 +98,25 @@ export const getInventoryReport = asyncHandler(async (req, res) => {
         acc.totalCostValue += cost;
         acc.totalRetailValue += value;
         acc.potentialProfit += (value - cost);
+        const categoryName = item.product?.category?.name || 'Uncategorized';
+        if (!byCategory[categoryName]) {
+            byCategory[categoryName] = { category: categoryName, totalValue: 0, totalQuantity: 0 };
+        }
+        byCategory[categoryName].totalValue += value;
+        byCategory[categoryName].totalQuantity += item.quantity;
+        if (item.quantity === 0)
+            outOfStockCount++;
+        else if (item.quantity <= (item.lowStockThreshold || 10))
+            lowStockCount++;
         return acc;
     }, { totalItems: 0, totalCostValue: 0, totalRetailValue: 0, potentialProfit: 0 });
-    res.status(200).json(new ApiResponse(200, stats));
+    res.status(200).json(new ApiResponse(200, {
+        ...stats,
+        totalProducts: inventory.length,
+        lowStockCount,
+        outOfStockCount,
+        byCategory: Object.values(byCategory).sort((a, b) => b.totalValue - a.totalValue),
+    }));
 });
 // @desc    Get customer insights report
 // @route   GET /api/reports/customers
@@ -284,7 +309,7 @@ export const exportReport = asyncHandler(async (req, res) => {
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=report-${type}-${Date.now()}.pdf`);
         doc.pipe(res);
-        doc.fontSize(20).text(`RetailSync ${String(type).toUpperCase()} Report`, { align: 'center' });
+        doc.fontSize(20).text(`Store360 ${String(type).toUpperCase()} Report`, { align: 'center' });
         doc.moveDown();
         if (type === 'sales') {
             const orders = await Order.find(query);
@@ -344,6 +369,17 @@ export const exportReport = asyncHandler(async (req, res) => {
             const items = await Inventory.find({ store: req.tenantId, product: { $nin: activeProductIds }, quantity: { $gt: 0 } }).populate('product');
             items.forEach((item) => {
                 doc.fontSize(10).text(`DEAD STOCK: ${item.product?.name} | SKU: ${item.product?.sku} | Qty: ${item.quantity}`);
+                doc.moveDown(0.5);
+            });
+        }
+        else if (type === 'purchases') {
+            const poQuery = { storeId: req.tenantId };
+            if (startDate && endDate) {
+                poQuery.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+            }
+            const pos = await PurchaseOrder.find(poQuery).populate('supplier', 'name');
+            pos.forEach((po) => {
+                doc.fontSize(10).text(`PO: ${po.poNumber} | Supplier: ${po.supplier?.name || 'Unknown'} | Total: ${po.grandTotal.toFixed(2)} | Status: ${po.status} | Date: ${new Date(po.createdAt).toLocaleDateString()}`);
                 doc.moveDown(0.5);
             });
         }
@@ -454,6 +490,33 @@ export const exportReport = asyncHandler(async (req, res) => {
             sku: item.product?.sku,
             quantity: item.quantity,
             value: (item.product?.price || 0) * item.quantity
+        }));
+    }
+    else if (type === 'purchases') {
+        const poQuery = { storeId: req.tenantId };
+        if (startDate && endDate) {
+            poQuery.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+        }
+        const pos = await PurchaseOrder.find(poQuery).populate('supplier', 'name');
+        worksheet.columns = [
+            { header: 'PO Number', key: 'poNumber', width: 20 },
+            { header: 'Supplier', key: 'supplier', width: 25 },
+            { header: 'Items', key: 'itemCount', width: 10 },
+            { header: 'Subtotal', key: 'subTotal', width: 15 },
+            { header: 'Tax', key: 'taxTotal', width: 15 },
+            { header: 'Grand Total', key: 'grandTotal', width: 15 },
+            { header: 'Status', key: 'status', width: 18 },
+            { header: 'Date', key: 'createdAt', width: 25 }
+        ];
+        pos.forEach((po) => worksheet.addRow({
+            poNumber: po.poNumber,
+            supplier: po.supplier?.name || 'Unknown',
+            itemCount: po.items.length,
+            subTotal: po.subTotal,
+            taxTotal: po.taxTotal,
+            grandTotal: po.grandTotal,
+            status: po.status,
+            createdAt: po.createdAt.toISOString()
         }));
     }
     if (format === 'csv') {

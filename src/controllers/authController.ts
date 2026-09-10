@@ -9,6 +9,7 @@ import { logAudit } from '../utils/auditLogger.js';
 import jwt from 'jsonwebtoken';
 import OTP from '../models/OTP.js';
 import bcrypt from 'bcryptjs';
+import { sendEmail } from '../utils/emailService.js';
 
 // @desc    Register a new store and owner
 // @route   POST /api/auth/register
@@ -18,7 +19,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 
     const userExists = await User.findOne({ email });
     if (userExists) {
-        return res.status(400).json(new ApiResponse(400, null, "User already exists"));
+        return res.status(400).json(new ApiResponse(400, null, 'User already exists'));
     }
 
     // Create User (Store Owner)
@@ -26,7 +27,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
         name,
         email,
         password,
-        role: UserRole.STORE_OWNER
+        role: UserRole.STORE_OWNER,
     });
 
     // Create Initial Store
@@ -35,7 +36,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
         name: storeName,
         shopType,
         owner: user._id,
-        subscriptionPlan: freePlan?._id
+        subscriptionPlan: freePlan?._id,
     });
 
     user.stores.push(store._id as any);
@@ -55,20 +56,26 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
         userId: user._id,
         action: 'REGISTER',
         entity: 'User',
-        entityId: user._id
+        entityId: user._id,
     });
 
-    res.status(201).json(new ApiResponse(201, {
-        user: {
-            id: user._id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            storeId: user.storeId
-        },
-        accessToken,
-        refreshToken
-    }, "Store registered successfully"));
+    res.status(201).json(
+        new ApiResponse(
+            201,
+            {
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    storeId: user.storeId,
+                },
+                accessToken,
+                refreshToken,
+            },
+            'Store registered successfully'
+        )
+    );
 });
 
 // @desc    Login user
@@ -85,9 +92,9 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
             userId: user?._id || null,
             action: 'LOGIN_FAILURE',
             entity: 'User',
-            details: `Failed login attempt for email: ${email}`
+            details: `Failed login attempt for email: ${email}`,
         });
-        return res.status(401).json(new ApiResponse(401, null, "Invalid credentials"));
+        return res.status(401).json(new ApiResponse(401, null, 'Invalid credentials'));
     }
 
     const accessToken = generateAccessToken(user);
@@ -103,20 +110,26 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
         userId: user._id,
         action: 'LOGIN',
         entity: 'User',
-        entityId: user._id
+        entityId: user._id,
     });
 
-    res.status(200).json(new ApiResponse(200, {
-        user: {
-            id: user._id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            storeId: user.storeId
-        },
-        accessToken,
-        refreshToken
-    }, "Login successful"));
+    res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    storeId: user.storeId,
+                },
+                accessToken,
+                refreshToken,
+            },
+            'Login successful'
+        )
+    );
 });
 
 // @desc    Logout user / clear refresh token
@@ -129,7 +142,7 @@ export const logout = asyncHandler(async (req: any, res: Response) => {
         await user.save();
     }
 
-    res.status(200).json(new ApiResponse(200, null, "Logged out successfully"));
+    res.status(200).json(new ApiResponse(200, null, 'Logged out successfully'));
 });
 
 // @desc    Refresh access token
@@ -139,7 +152,7 @@ export const refreshToken = asyncHandler(async (req: Request, res: Response) => 
     const { refreshToken } = req.body;
 
     if (!refreshToken) {
-        return res.status(401).json(new ApiResponse(401, null, "Refresh token required"));
+        return res.status(401).json(new ApiResponse(401, null, 'Refresh token required'));
     }
 
     try {
@@ -147,7 +160,7 @@ export const refreshToken = asyncHandler(async (req: Request, res: Response) => 
         const user = await User.findById(decoded.id);
 
         if (!user || user.refreshToken !== refreshToken) {
-            return res.status(401).json(new ApiResponse(401, null, "Invalid refresh token"));
+            return res.status(401).json(new ApiResponse(401, null, 'Invalid refresh token'));
         }
 
         const newAccessToken = generateAccessToken(user);
@@ -156,12 +169,18 @@ export const refreshToken = asyncHandler(async (req: Request, res: Response) => 
         user.refreshToken = newRefreshToken;
         await user.save();
 
-        res.status(200).json(new ApiResponse(200, {
-            accessToken: newAccessToken,
-            refreshToken: newRefreshToken
-        }, "Token refreshed"));
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    accessToken: newAccessToken,
+                    refreshToken: newRefreshToken,
+                },
+                'Token refreshed'
+            )
+        );
     } catch (error) {
-        return res.status(401).json(new ApiResponse(401, null, "Invalid refresh token"));
+        return res.status(401).json(new ApiResponse(401, null, 'Invalid refresh token'));
     }
 });
 
@@ -172,11 +191,19 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
     const { email } = req.body;
     const user = await User.findOne({ email });
 
+    // Always return the same generic response whether or not the account exists —
+    // returning 404 for unknown emails lets an attacker enumerate registered accounts.
+    const genericResponse = () =>
+        res
+            .status(200)
+            .json(
+                new ApiResponse(200, null, 'If an account exists for that email, a password reset code has been sent.')
+            );
+
     if (!user) {
-        return res.status(404).json(new ApiResponse(404, null, "User not found"));
+        return genericResponse();
     }
 
-    // Reuse OTP logic for email (MOCK)
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
@@ -186,9 +213,15 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
         { upsert: true, returnDocument: 'after' }
     );
 
-    console.log(`[AUTH] Password Reset OTP for ${email}: ${code}`);
+    // Real email send when SMTP is configured; emailService.ts itself logs the code
+    // to the console as an honest fallback when it isn't.
+    await sendEmail({
+        to: email,
+        subject: 'Your Store360 password reset code',
+        html: `<p>Your password reset code is <strong>${code}</strong>. It expires in 10 minutes.</p><p>If you didn't request this, you can ignore this email.</p>`,
+    });
 
-    res.status(200).json(new ApiResponse(200, null, "Password reset code sent to your email (Check console)"));
+    genericResponse();
 });
 
 // @desc    Reset Password
@@ -200,12 +233,12 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
     const otpRecord = await OTP.findOne({ phone: `email:${email}`, code });
 
     if (!otpRecord || otpRecord.expiresAt < new Date()) {
-        return res.status(400).json(new ApiResponse(400, null, "Invalid or expired reset code"));
+        return res.status(400).json(new ApiResponse(400, null, 'Invalid or expired reset code'));
     }
 
     const user = await User.findOne({ email });
     if (!user) {
-        return res.status(404).json(new ApiResponse(404, null, "User not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'User not found'));
     }
 
     user.password = newPassword; // Will be hashed by pre-save hook
@@ -213,5 +246,5 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
 
     await OTP.deleteOne({ _id: otpRecord._id });
 
-    res.status(200).json(new ApiResponse(200, null, "Password reset successfully"));
+    res.status(200).json(new ApiResponse(200, null, 'Password reset successfully'));
 });

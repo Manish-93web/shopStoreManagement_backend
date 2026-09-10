@@ -1,5 +1,5 @@
-// Mock Twilio structure
-// import twilio from 'twilio';
+import twilio from 'twilio';
+let client = null;
 export const sendSMS = async (options) => {
     try {
         const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -7,19 +7,21 @@ export const sendSMS = async (options) => {
         const fromNumber = process.env.TWILIO_PHONE_NUMBER;
         if (!accountSid || !authToken || !fromNumber) {
             console.log("-----------------------------------------");
-            console.log(`[MOCK SMS] To: ${options.to}`);
-            console.log(`[MOCK SMS] Body: ${options.body}`);
+            console.log(`[SMS NOT CONFIGURED] Set TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_PHONE_NUMBER to send real SMS.`);
+            console.log(`[SMS] To: ${options.to}`);
+            console.log(`[SMS] Body: ${options.body}`);
             console.log("-----------------------------------------");
-            return true;
+            return false;
         }
-        // If credentials exist, initialize client
-        // const client = twilio(accountSid, authToken);
-        // await client.messages.create({
-        //     body: options.body,
-        //     from: fromNumber,
-        //     to: options.to
-        // });
-        console.log(`[SMS] Sent successfully to ${options.to}`);
+        if (!client) {
+            client = twilio(accountSid, authToken);
+        }
+        const message = await client.messages.create({
+            body: options.body,
+            from: fromNumber,
+            to: options.to
+        });
+        console.log(`[SMS] Sent successfully to ${options.to} (SID: ${message.sid})`);
         return true;
     }
     catch (error) {

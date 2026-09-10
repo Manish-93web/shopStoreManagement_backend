@@ -12,7 +12,7 @@ export const getTheme = asyncHandler(async (req, res) => {
             accentColor: '#8b5cf6',
             backgroundColor: '#0f0f1a',
             textColor: '#f8fafc',
-            brandName: 'RetailSync',
+            brandName: 'Store360',
             fontFamily: 'Inter',
             borderRadius: '0.75rem'
         }));
