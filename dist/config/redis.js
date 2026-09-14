@@ -16,21 +16,23 @@ export const connectRedis = async () => {
         console.error('Redis connection failed. Performance might be affected.');
     }
 };
-// Per-store cache "generation" — bump it once on any write instead of scanning/
-// deleting every cached key variant (KEYS is O(N) and blocks Redis in production).
-// Reads embed the current version in their cache key, so bumping the version
-// makes every previously-cached read for that store instantly stale; the old
-// entries just expire on their own TTL rather than being actively deleted.
-export const getCacheVersion = async (storeId) => {
+// Per-store, per-resource cache "generation" — bump it once on any write instead
+// of scanning/deleting every cached key variant (KEYS is O(N) and blocks Redis in
+// production). Reads embed the current version in their cache key, so bumping the
+// version makes every previously-cached read for that store+resource instantly
+// stale; the old entries just expire on their own TTL rather than being actively
+// deleted. `resource` defaults to 'products' for existing callers — pass e.g.
+// 'orders' for a separate namespace so unrelated writes don't cross-invalidate.
+export const getCacheVersion = async (storeId, resource = 'products') => {
     if (process.env.SKIP_REDIS === 'true')
         return '1';
-    const v = await redisClient.get(`v:products:${storeId}`);
+    const v = await redisClient.get(`v:${resource}:${storeId}`);
     return v || '1';
 };
-export const bumpCacheVersion = async (storeId) => {
+export const bumpCacheVersion = async (storeId, resource = 'products') => {
     if (process.env.SKIP_REDIS === 'true')
         return;
-    await redisClient.incr(`v:products:${storeId}`);
+    await redisClient.incr(`v:${resource}:${storeId}`);
 };
 // Generic fixed-TTL cache-aside helper for read-heavy, expensive-aggregation
 // endpoints (analytics/reports) that don't need write-invalidation — a few

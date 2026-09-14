@@ -30,15 +30,15 @@ export const backupController = {
     triggerBackup: asyncHandler(async (req, res) => {
         const userId = req.user?._id;
         if (!userId) {
-            return res.status(401).json(new ApiResponse(401, null, "User not authenticated"));
+            return res.status(401).json(new ApiResponse(401, null, 'User not authenticated'));
         }
         // Shares the same S3-vs-local storage logic as the daily cron backup,
         // instead of a separate local-only copy of it.
         const backupJob = await runBackupForStore(req.tenantId, userId, 'backup');
         if (backupJob.status === 'Failed') {
-            return res.status(500).json(new ApiResponse(500, null, "Backup failed: " + backupJob.error));
+            return res.status(500).json(new ApiResponse(500, null, 'Backup failed: ' + backupJob.error));
         }
-        res.status(200).json(new ApiResponse(200, backupJob, "Backup completed successfully"));
+        res.status(200).json(new ApiResponse(200, backupJob, 'Backup completed successfully'));
     }),
     // @desc    Get backup history
     // @route   GET /api/backup/history
@@ -47,7 +47,7 @@ export const backupController = {
             .sort({ createdAt: -1 })
             .populate('triggeredBy', 'name email')
             .limit(20);
-        res.status(200).json(new ApiResponse(200, history, "Backup history retrieved"));
+        res.status(200).json(new ApiResponse(200, history, 'Backup history retrieved'));
     }),
     // @desc    Restore from a backup
     // @route   POST /api/backup/restore/:id
@@ -56,13 +56,13 @@ export const backupController = {
         const userId = req.user?._id;
         const backup = await BackupJob.findOne({ _id: id, storeId: req.tenantId });
         if (!backup || !backup.fileUrl) {
-            return res.status(404).json(new ApiResponse(404, null, "Backup file not found"));
+            return res.status(404).json(new ApiResponse(404, null, 'Backup file not found'));
         }
         const restoreJob = await RestoreJob.create({
             backupJobId: backup._id,
             storeId: req.tenantId,
             status: 'Running',
-            restoredBy: userId
+            restoredBy: userId,
         });
         try {
             const filePath = path.join(process.cwd(), backup.fileUrl);
@@ -82,13 +82,13 @@ export const backupController = {
             }
             restoreJob.status = 'Completed';
             await restoreJob.save();
-            res.status(200).json(new ApiResponse(200, restoreJob, "Data restored successfully"));
+            res.status(200).json(new ApiResponse(200, restoreJob, 'Data restored successfully'));
         }
         catch (error) {
             restoreJob.status = 'Failed';
             restoreJob.error = error.message;
             await restoreJob.save();
-            res.status(500).json(new ApiResponse(500, null, "Restore failed: " + error.message));
+            res.status(500).json(new ApiResponse(500, null, 'Restore failed: ' + error.message));
         }
-    })
+    }),
 };

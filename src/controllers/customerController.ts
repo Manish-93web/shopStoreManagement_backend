@@ -116,7 +116,16 @@ export const getCustomerById = asyncHandler(async (req: TenantRequest, res: Resp
         .limit(10);
 
     const totalSpend = await Order.aggregate([
-        { $match: { customer: customer._id, storeId: req.tenantId, status: 'Completed' } },
+        // $match in an aggregation pipeline does no Mongoose query casting — unlike
+        // .find(), a raw string here silently matches nothing against the ObjectId
+        // stored on Order.storeId, so this must be cast explicitly.
+        {
+            $match: {
+                customer: customer._id,
+                storeId: new mongoose.Types.ObjectId(req.tenantId as string),
+                status: 'Completed',
+            },
+        },
         { $group: { _id: null, total: { $sum: '$grandTotal' } } },
     ]);
 
@@ -275,8 +284,15 @@ export const getCustomerAnalytics = asyncHandler(async (req: TenantRequest, res:
     });
 
     // Customers who bought more than once (Retention heuristic)
+    // Same $match-doesn't-cast pitfall as getCustomerById's totalSpend above.
     const repeatBuyersAggr = await Order.aggregate([
-        { $match: { storeId, status: 'Completed', customer: { $exists: true, $ne: null } } },
+        {
+            $match: {
+                storeId: new mongoose.Types.ObjectId(storeId as string),
+                status: 'Completed',
+                customer: { $exists: true, $ne: null },
+            },
+        },
         { $group: { _id: '$customer', purchaseCount: { $sum: 1 } } },
         { $match: { purchaseCount: { $gt: 1 } } },
         { $count: 'repeatBuyers' },

@@ -230,6 +230,7 @@ export const createExchange = asyncHandler(async (req: TenantRequest, res: Respo
         await session.commitTransaction();
 
         await bumpCacheVersion(req.tenantId!.toString());
+        await bumpCacheVersion(req.tenantId!.toString(), 'orders');
         for (const item of [...returnedItems, ...newItems]) {
             const inv = await Inventory.findOne(
                 item.variant

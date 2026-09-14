@@ -18,7 +18,7 @@ import Wallet from '../models/Wallet.js';
 import webhookService from '../services/webhookService.js';
 import Coupon from '../models/Coupon.js';
 import Loyalty from '../models/Loyalty.js';
-import redisClient, { bumpCacheVersion } from '../config/redis.js';
+import redisClient, { bumpCacheVersion, getCacheVersion } from '../config/redis.js';
 
 // @desc    Create a new POS order
 // @route   POST /api/orders
@@ -35,6 +35,7 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
         paymentDetails,
         loyaltyPointsUsed,
         couponCode,
+        isGstBill = true,
     } = req.body;
 
     const orderNumber = `ORD-${Date.now()}`;
@@ -76,10 +77,13 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
     const isInterState = !!(gstStore?.state && gstCustomerState && gstStore.state !== gstCustomerState);
     const taxType: 'Intra-State' | 'Inter-State' = isInterState ? 'Inter-State' : 'Intra-State';
 
+    // A non-GST bill charges no tax at all, regardless of what the client sent —
+    // enforced here too, not just trusted from the POS payload.
     const itemsWithGstSplit = items.map((item: any) => {
-        const itemTax = item.tax || 0;
+        const itemTax = isGstBill ? item.tax || 0 : 0;
         return {
             ...item,
+            tax: itemTax,
             cgst: isInterState ? 0 : itemTax / 2,
             sgst: isInterState ? 0 : itemTax / 2,
             igst: isInterState ? itemTax : 0,
@@ -92,8 +96,9 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
         customer: customerId,
         items: itemsWithGstSplit,
         subTotal,
-        taxTotal,
+        taxTotal: isGstBill ? taxTotal : 0,
         taxType,
+        isGstBill,
         discountTotal,
         discountReason,
         grandTotal,
@@ -211,6 +216,7 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
         });
     }
     await bumpCacheVersion(req.tenantId!.toString());
+    await bumpCacheVersion(req.tenantId!.toString(), 'orders');
 
     // 4. Trigger Webhooks
     webhookService.trigger('order.created', req.tenantId!.toString(), order);
@@ -227,7 +233,8 @@ export const getOrders = asyncHandler(async (req: TenantRequest, res: Response) 
     const skip = (page - 1) * limit;
     const search = (req.query.search as string)?.trim();
 
-    const cacheKey = `orders:${req.tenantId}:p${page}:l${limit}:s${search || ''}`;
+    const ordersCacheVersion = await getCacheVersion(req.tenantId!.toString(), 'orders');
+    const cacheKey = `orders:${req.tenantId}:v${ordersCacheVersion}:p${page}:l${limit}:s${search || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), 'Orders from cache'));
@@ -373,6 +380,7 @@ export const cancelOrder = asyncHandler(async (req: TenantRequest, res: Response
     }
 
     await bumpCacheVersion(req.tenantId!.toString());
+    await bumpCacheVersion(req.tenantId!.toString(), 'orders');
     for (const item of order.items) {
         const inv = await Inventory.findOne(
             item.variant

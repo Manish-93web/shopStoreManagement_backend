@@ -37,6 +37,7 @@ export interface IOrder extends Document {
     subTotal: number;
     taxTotal: number;
     taxType: 'Intra-State' | 'Inter-State';
+    isGstBill: boolean;
     discountTotal: number;
     discountReason?: string;
     grandTotal: number;
@@ -73,6 +74,11 @@ const OrderSchema: Schema = new Schema(
         subTotal: { type: Number, required: true },
         taxTotal: { type: Number, required: true },
         taxType: { type: String, enum: ['Intra-State', 'Inter-State'], default: 'Intra-State' },
+        // Whether this sale was billed as a GST tax invoice or a non-GST bill of
+        // supply — a per-transaction cashier choice, not tied to the store's own
+        // GST registration (an unregistered/composition dealer, or a sale under the
+        // GST threshold, still needs to issue bills without a tax line).
+        isGstBill: { type: Boolean, default: true },
         discountTotal: { type: Number, default: 0 },
         discountReason: { type: String },
         grandTotal: { type: Number, required: true },
