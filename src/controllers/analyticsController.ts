@@ -174,6 +174,31 @@ export const getSupplierAnalytics = asyncHandler(async (req: TenantRequest, res:
         const totalPaid = supplierPayments.reduce((sum, p) => sum + p.amount, 0);
         const pendingAmount = totalOrdered - totalPaid;
 
+        // Real performance signals, not just spend: fulfillment rate (how much of what
+        // was ordered actually arrived) and average lead time (days from order to
+        // receipt), computed from PurchaseOrder's own quantity/timestamp fields —
+        // no fabricated "on-time %" that would need an expected-delivery-date field
+        // this schema doesn't have.
+        const fulfillablePOs = supplierPOs.filter((po) => po.status !== 'Draft' && po.status !== 'Cancelled');
+        let orderedQty = 0;
+        let receivedQty = 0;
+        for (const po of fulfillablePOs) {
+            for (const item of po.items) {
+                orderedQty += item.quantity;
+                receivedQty += item.receivedQuantity || 0;
+            }
+        }
+        const fulfillmentRate = orderedQty > 0 ? Math.min(100, (receivedQty / orderedQty) * 100) : null;
+
+        const receivedPOs = supplierPOs.filter((po) => po.status === 'Received' && po.receivedAt);
+        const avgLeadTimeDays =
+            receivedPOs.length > 0
+                ? receivedPOs.reduce((sum, po) => {
+                      const days = (po.receivedAt!.getTime() - po.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+                      return sum + days;
+                  }, 0) / receivedPOs.length
+                : null;
+
         return {
             supplierId: supplier._id,
             name: supplier.name,
@@ -181,6 +206,8 @@ export const getSupplierAnalytics = asyncHandler(async (req: TenantRequest, res:
             totalOrdered,
             totalPaid,
             pendingAmount: pendingAmount > 0 ? pendingAmount : 0,
+            fulfillmentRate: fulfillmentRate !== null ? Math.round(fulfillmentRate * 10) / 10 : null,
+            avgLeadTimeDays: avgLeadTimeDays !== null ? Math.round(avgLeadTimeDays * 10) / 10 : null,
         };
     });
 

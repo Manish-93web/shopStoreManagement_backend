@@ -13,11 +13,11 @@ export const checkFeatureAccess = (featureName) => {
         }
         const tenantId = req.tenantId;
         if (!tenantId) {
-            return res.status(400).json(new ApiResponse(400, null, "Store ID is required to verify feature access"));
+            return res.status(400).json(new ApiResponse(400, null, 'Store ID is required to verify feature access'));
         }
         const store = await Store.findById(tenantId).populate('subscriptionPlan');
         if (!store) {
-            return res.status(404).json(new ApiResponse(404, null, "Store not found"));
+            return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
         }
         // A store with no plan assigned (registered before the Free-plan-on-signup
         // logic existed, or a plan that was later deleted) should default to the
@@ -31,7 +31,9 @@ export const checkFeatureAccess = (featureName) => {
         const hasAccess = (store.featuresEnabled && store.featuresEnabled.includes(featureName)) ||
             (planFeatures && planFeatures.includes(featureName));
         if (!hasAccess) {
-            return res.status(403).json(new ApiResponse(403, null, `Your current plan does not include access to the "${featureName}" feature. Please upgrade to continue.`));
+            return res
+                .status(403)
+                .json(new ApiResponse(403, null, `Your current plan does not include access to the "${featureName}" feature. Please upgrade to continue.`));
         }
         next();
     };

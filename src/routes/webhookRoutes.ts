@@ -6,7 +6,7 @@ import {
     deleteWebhook,
     getWebhookLogs,
 } from '../controllers/webhookController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
 
 const router = express.Router();
@@ -16,9 +16,11 @@ const router = express.Router();
 // signature verification, which this router (reached after express.json() has already
 // consumed the stream) cannot provide.
 
-// Outgoing Webhooks CRUD (requires authentication and tenant context)
+// Outgoing Webhooks CRUD — a webhook can be pointed at any external URL and receives a
+// feed of store events, so this is store-owner-only, matching Backups/Archive/TaxRule.
 router.use(protect);
 router.use(tenantHandler);
+router.use(authorize('STORE_OWNER'));
 
 router.route('/').get(getWebhooks).post(createWebhook);
 
