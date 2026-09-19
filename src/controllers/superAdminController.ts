@@ -52,8 +52,14 @@ export const getSystemStats = asyncHandler(async (req: TenantRequest, res: Respo
 // @desc    Get all stores (Tenants)
 // @route   GET /api/v1/super-admin/stores
 export const getAllStores = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { page = 1, limit = 10, search = '' } = req.query;
-    const query = search ? { name: { $regex: search as string, $options: 'i' } } : {};
+    const { page = 1, limit = 10, search = '', status = '', plan = '' } = req.query;
+
+    const query: Record<string, any> = {};
+    if (search) query.name = { $regex: search as string, $options: 'i' };
+    // Store.status is the Pending/Approved/Suspended lifecycle field shown as the
+    // "Status" badge on the tenants table — the most useful single filter here.
+    if (status) query.status = status as string;
+    if (plan && mongoose.Types.ObjectId.isValid(plan as string)) query.subscriptionPlan = plan as string;
 
     const stores = await Store.find(query)
         .populate('owner', 'name email phone')
@@ -182,21 +188,74 @@ export const approveStore = asyncHandler(async (req: TenantRequest, res: Respons
 // @desc    Get Platform Audit Logs
 // @route   GET /api/v1/super-admin/audit-logs
 export const getSystemAuditLogs = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { page = 1, limit = 20 } = req.query;
-    const logs = await AuditLog.find()
-        .populate('userId', 'name email')
-        .populate('storeId', 'name')
-        .sort({ createdAt: -1 })
-        .limit(Number(limit))
-        .skip((Number(page) - 1) * Number(limit));
+    const { page = 1, limit = 20, action = '', entity = '', startDate = '', endDate = '', search = '' } = req.query;
 
-    const total = await AuditLog.countDocuments();
+    const query: Record<string, any> = {};
+    if (action) query.action = action as string;
+    if (entity) query.entity = entity as string;
+    if (startDate || endDate) {
+        query.createdAt = {};
+        if (startDate)
+            query.createdAt.$gte = dayjs(startDate as string)
+                .startOf('day')
+                .toDate();
+        if (endDate)
+            query.createdAt.$lte = dayjs(endDate as string)
+                .endOf('day')
+                .toDate();
+    }
+
+    // Free-text search matches the populated store name or user name. AuditLog has no
+    // direct text field for either, so resolve matching store/user ids first (two-step
+    // lookup) rather than reaching for a $lookup aggregation for what's a small filter.
+    if (search) {
+        const term = search as string;
+        const [matchingStores, matchingUsers] = await Promise.all([
+            Store.find({ name: { $regex: term, $options: 'i' } }).select('_id'),
+            User.find({ name: { $regex: term, $options: 'i' } }).select('_id'),
+        ]);
+        const storeIds = matchingStores.map((s) => s._id);
+        const userIds = matchingUsers.map((u) => u._id);
+        if (storeIds.length === 0 && userIds.length === 0) {
+            // No store/user matches this term — short-circuit to an empty page rather
+            // than falling through to an unfiltered query.
+            return res
+                .status(200)
+                .json(
+                    new ApiResponse(200, {
+                        logs: [],
+                        totalPages: 0,
+                        currentPage: Number(page),
+                        distinctActions: [],
+                        distinctEntities: [],
+                    })
+                );
+        }
+        query.$or = [
+            ...(storeIds.length ? [{ storeId: { $in: storeIds } }] : []),
+            ...(userIds.length ? [{ userId: { $in: userIds } }] : []),
+        ];
+    }
+
+    const [logs, total, distinctActions, distinctEntities] = await Promise.all([
+        AuditLog.find(query)
+            .populate('userId', 'name email')
+            .populate('storeId', 'name')
+            .sort({ createdAt: -1 })
+            .limit(Number(limit))
+            .skip((Number(page) - 1) * Number(limit)),
+        AuditLog.countDocuments(query),
+        AuditLog.distinct('action'),
+        AuditLog.distinct('entity'),
+    ]);
 
     res.status(200).json(
         new ApiResponse(200, {
             logs,
             totalPages: Math.ceil(total / Number(limit)),
             currentPage: Number(page),
+            distinctActions,
+            distinctEntities,
         })
     );
 });

@@ -8,10 +8,21 @@ import Store from '../models/Store.js';
 // @desc    Get all employees for a store
 // @route   GET /api/employees
 export const getEmployees = asyncHandler(async (req, res) => {
-    const employees = await User.find({
+    const scopedRoles = [UserRole.MANAGER, UserRole.CASHIER, UserRole.STORE_OWNER];
+    const role = req.query.role?.trim();
+    const isActiveParam = req.query.isActive?.trim();
+    const query = {
         storeId: req.tenantId,
-        role: { $in: [UserRole.MANAGER, UserRole.CASHIER, UserRole.STORE_OWNER] }
-    }).select('-password -refreshToken');
+        role: { $in: scopedRoles },
+    };
+    // Only honor a role filter if it's one of the roles this endpoint already scopes to.
+    if (role && scopedRoles.includes(role)) {
+        query.role = role;
+    }
+    if (isActiveParam === 'true' || isActiveParam === 'false') {
+        query.isActive = isActiveParam === 'true';
+    }
+    const employees = await User.find(query).select('-password -refreshToken');
     res.status(200).json(new ApiResponse(200, employees));
 });
 // @desc    Create a new employee (add user to store)

@@ -96,11 +96,63 @@ export const returnController = {
     },
     getReturns: async (req, res) => {
         try {
-            const returns = await ReturnOrder.find({ storeId: req.tenantId })
-                .populate('originalOrder')
-                .populate('customer')
-                .sort({ createdAt: -1 });
-            res.json({ success: true, data: returns });
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 20;
+            const skip = (page - 1) * limit;
+            const search = req.query.search?.trim();
+            const status = req.query.status?.trim();
+            const startDate = req.query.startDate;
+            const endDate = req.query.endDate;
+            const query = { storeId: req.tenantId };
+            if (search) {
+                // Matches either the return number directly, or the original order's
+                // order number — a staffer is as likely to recall the sale as the RMA #.
+                const matchingOrders = await Order.find({
+                    storeId: req.tenantId,
+                    orderNumber: { $regex: search, $options: 'i' },
+                }).select('_id');
+                query.$or = [
+                    { returnNumber: { $regex: search, $options: 'i' } },
+                    ...(matchingOrders.length ? [{ originalOrder: { $in: matchingOrders.map((o) => o._id) } }] : []),
+                ];
+            }
+            if (status)
+                query.status = status;
+            if (startDate && endDate) {
+                query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+            }
+            const [returns, total, statsAgg] = await Promise.all([
+                ReturnOrder.find(query)
+                    .populate('originalOrder')
+                    .populate('customer')
+                    .sort({ createdAt: -1 })
+                    .skip(skip)
+                    .limit(limit),
+                ReturnOrder.countDocuments(query),
+                // Quick-stat cards summarize the whole store, independent of the
+                // current search/status/date filters or pagination window.
+                ReturnOrder.aggregate([
+                    { $match: { storeId: new mongoose.Types.ObjectId(req.tenantId) } },
+                    {
+                        $group: {
+                            _id: null,
+                            totalReturns: { $sum: 1 },
+                            pendingInspection: { $sum: { $cond: [{ $eq: ['$status', 'Received'] }, 1, 0] } },
+                            completed: { $sum: { $cond: [{ $eq: ['$status', 'Completed'] }, 1, 0] } },
+                            totalRefunded: { $sum: { $ifNull: ['$refundAmount', 0] } },
+                        },
+                    },
+                ]),
+            ]);
+            const stats = statsAgg[0] || { totalReturns: 0, pendingInspection: 0, completed: 0, totalRefunded: 0 };
+            res.json({
+                success: true,
+                data: {
+                    returns,
+                    pagination: { total, page, limit, pages: Math.ceil(total / limit) || 1 },
+                    stats,
+                },
+            });
         }
         catch (error) {
             res.status(500).json({ success: false, message: error.message });

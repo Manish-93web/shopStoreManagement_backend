@@ -59,6 +59,9 @@ export const getProducts = asyncHandler(async (req, res) => {
         else if (stockStatus === 'out') {
             invQuery.quantity = 0;
         }
+        else if (stockStatus === 'in') {
+            invQuery.$expr = { $gt: ['$quantity', '$lowStockThreshold'] };
+        }
         const matchingInventories = await Inventory.find(invQuery).select('product');
         const productIds = matchingInventories.map((inv) => inv.product);
         query._id = { $in: productIds };

@@ -7,7 +7,19 @@ import ApiResponse from '../utils/apiResponse.js';
 // @desc    Get all suppliers for a store
 // @route   GET /api/suppliers
 export const getSuppliers = asyncHandler(async (req, res) => {
-    const suppliers = await Supplier.find({ storeId: req.tenantId }).sort({ name: 1 });
+    const search = req.query.search?.trim();
+    const tag = req.query.tag?.trim();
+    const query = { storeId: req.tenantId };
+    if (search) {
+        query.$or = [
+            { name: { $regex: search, $options: 'i' } },
+            { phone: { $regex: search, $options: 'i' } },
+            { contactPerson: { $regex: search, $options: 'i' } },
+        ];
+    }
+    if (tag)
+        query.tags = tag;
+    const suppliers = await Supplier.find(query).sort({ name: 1 });
     res.status(200).json(new ApiResponse(200, suppliers));
 });
 // @desc    Get a single supplier with its purchase order + payment history

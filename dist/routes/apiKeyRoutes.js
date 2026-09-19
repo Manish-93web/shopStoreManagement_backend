@@ -8,10 +8,6 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantHandler);
 router.use(authorize('STORE_OWNER'));
-router.route('/')
-    .get(getApiKeys)
-    .post(createApiKey);
-router.route('/:id')
-    .put(updateApiKey)
-    .delete(deleteApiKey);
+router.route('/').get(getApiKeys).post(createApiKey);
+router.route('/:id').put(updateApiKey).delete(deleteApiKey);
 export default router;

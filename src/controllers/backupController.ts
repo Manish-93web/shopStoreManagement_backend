@@ -3,6 +3,7 @@ import { TenantRequest } from '../middleware/tenantHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import mongoose from 'mongoose';
+import dayjs from 'dayjs';
 import BackupJob from '../models/BackupJob.js';
 import RestoreJob from '../models/RestoreJob.js';
 import fs from 'fs/promises';
@@ -48,13 +49,35 @@ export const backupController = {
         res.status(200).json(new ApiResponse(200, backupJob, 'Backup completed successfully'));
     }),
 
-    // @desc    Get backup history
+    // @desc    Get backup history. A Super Admin has no store context (no x-store-id
+    //          header, req.tenantId is undefined) and sees the platform-wide registry
+    //          across every tenant; a store owner stays scoped to their own store.
     // @route   GET /api/backup/history
     getBackupHistory: asyncHandler(async (req: TenantRequest, res: Response) => {
-        const history = await BackupJob.find({ storeId: req.tenantId })
+        const { status = '', startDate = '', endDate = '' } = req.query;
+        const isPlatformWide = req.user?.role === 'SUPER_ADMIN' && !req.tenantId;
+
+        const query: Record<string, any> = isPlatformWide ? {} : { storeId: req.tenantId };
+        if (status) query.status = status as string;
+        if (startDate || endDate) {
+            query.createdAt = {};
+            if (startDate)
+                query.createdAt.$gte = dayjs(startDate as string)
+                    .startOf('day')
+                    .toDate();
+            if (endDate)
+                query.createdAt.$lte = dayjs(endDate as string)
+                    .endOf('day')
+                    .toDate();
+        }
+
+        let historyQuery = BackupJob.find(query)
             .sort({ createdAt: -1 })
             .populate('triggeredBy', 'name email')
             .limit(20);
+        if (isPlatformWide) historyQuery = historyQuery.populate('storeId', 'name');
+
+        const history = await historyQuery;
 
         res.status(200).json(new ApiResponse(200, history, 'Backup history retrieved'));
     }),

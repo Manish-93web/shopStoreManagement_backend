@@ -42,8 +42,14 @@ export const getSalesPrediction = asyncHandler(async (req, res) => {
 // @route   GET /api/v1/analytics/categories
 export const getCategoryAnalytics = asyncHandler(async (req, res) => {
     const storeId = req.tenantId;
-    const { value: result } = await withCache(`analytics:categories:${storeId}`, 300, async () => {
-        const orders = await Order.find({ storeId, status: 'Completed' }).populate({
+    const { startDate, endDate } = req.query;
+    const cacheKey = `analytics:categories:${storeId}:${startDate || ''}:${endDate || ''}`;
+    const { value: result } = await withCache(cacheKey, 300, async () => {
+        const query = { storeId, status: 'Completed' };
+        if (startDate && endDate) {
+            query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+        }
+        const orders = await Order.find(query).populate({
             path: 'items.product',
             populate: { path: 'category' },
         });

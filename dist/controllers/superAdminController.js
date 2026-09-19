@@ -44,8 +44,16 @@ export const getSystemStats = asyncHandler(async (req, res) => {
 // @desc    Get all stores (Tenants)
 // @route   GET /api/v1/super-admin/stores
 export const getAllStores = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, search = '' } = req.query;
-    const query = search ? { name: { $regex: search, $options: 'i' } } : {};
+    const { page = 1, limit = 10, search = '', status = '', plan = '' } = req.query;
+    const query = {};
+    if (search)
+        query.name = { $regex: search, $options: 'i' };
+    // Store.status is the Pending/Approved/Suspended lifecycle field shown as the
+    // "Status" badge on the tenants table — the most useful single filter here.
+    if (status)
+        query.status = status;
+    if (plan && mongoose.Types.ObjectId.isValid(plan))
+        query.subscriptionPlan = plan;
     const stores = await Store.find(query)
         .populate('owner', 'name email phone')
         .populate('subscriptionPlan')
@@ -148,18 +156,57 @@ export const approveStore = asyncHandler(async (req, res) => {
 // @desc    Get Platform Audit Logs
 // @route   GET /api/v1/super-admin/audit-logs
 export const getSystemAuditLogs = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 20 } = req.query;
-    const logs = await AuditLog.find()
-        .populate('userId', 'name email')
-        .populate('storeId', 'name')
-        .sort({ createdAt: -1 })
-        .limit(Number(limit))
-        .skip((Number(page) - 1) * Number(limit));
-    const total = await AuditLog.countDocuments();
+    const { page = 1, limit = 20, action = '', entity = '', startDate = '', endDate = '', search = '' } = req.query;
+    const query = {};
+    if (action)
+        query.action = action;
+    if (entity)
+        query.entity = entity;
+    if (startDate || endDate) {
+        query.createdAt = {};
+        if (startDate)
+            query.createdAt.$gte = dayjs(startDate).startOf('day').toDate();
+        if (endDate)
+            query.createdAt.$lte = dayjs(endDate).endOf('day').toDate();
+    }
+    // Free-text search matches the populated store name or user name. AuditLog has no
+    // direct text field for either, so resolve matching store/user ids first (two-step
+    // lookup) rather than reaching for a $lookup aggregation for what's a small filter.
+    if (search) {
+        const term = search;
+        const [matchingStores, matchingUsers] = await Promise.all([
+            Store.find({ name: { $regex: term, $options: 'i' } }).select('_id'),
+            User.find({ name: { $regex: term, $options: 'i' } }).select('_id'),
+        ]);
+        const storeIds = matchingStores.map((s) => s._id);
+        const userIds = matchingUsers.map((u) => u._id);
+        if (storeIds.length === 0 && userIds.length === 0) {
+            // No store/user matches this term — short-circuit to an empty page rather
+            // than falling through to an unfiltered query.
+            return res.status(200).json(new ApiResponse(200, { logs: [], totalPages: 0, currentPage: Number(page), distinctActions: [], distinctEntities: [] }));
+        }
+        query.$or = [
+            ...(storeIds.length ? [{ storeId: { $in: storeIds } }] : []),
+            ...(userIds.length ? [{ userId: { $in: userIds } }] : []),
+        ];
+    }
+    const [logs, total, distinctActions, distinctEntities] = await Promise.all([
+        AuditLog.find(query)
+            .populate('userId', 'name email')
+            .populate('storeId', 'name')
+            .sort({ createdAt: -1 })
+            .limit(Number(limit))
+            .skip((Number(page) - 1) * Number(limit)),
+        AuditLog.countDocuments(query),
+        AuditLog.distinct('action'),
+        AuditLog.distinct('entity'),
+    ]);
     res.status(200).json(new ApiResponse(200, {
         logs,
         totalPages: Math.ceil(total / Number(limit)),
         currentPage: Number(page),
+        distinctActions,
+        distinctEntities,
     }));
 });
 // @desc    System health for Super Admin — infrastructure/integration status, not

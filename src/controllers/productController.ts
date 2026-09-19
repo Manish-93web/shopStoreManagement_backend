@@ -64,6 +64,8 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
             invQuery.$expr = { $lte: ['$quantity', '$lowStockThreshold'] };
         } else if (stockStatus === 'out') {
             invQuery.quantity = 0;
+        } else if (stockStatus === 'in') {
+            invQuery.$expr = { $gt: ['$quantity', '$lowStockThreshold'] };
         }
 
         const matchingInventories = await Inventory.find(invQuery).select('product');

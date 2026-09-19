@@ -1,15 +1,33 @@
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
+import dayjs from 'dayjs';
 import ArchiveJob from '../models/ArchiveJob.js';
 import { archiveService } from '../services/archiveService.js';
 export const archiveController = {
-    // @desc    Get archive history
+    // @desc    Get archive history. Same platform-wide-vs-tenant-scoped split as
+    //          backupController.getBackupHistory: a Super Admin (no req.tenantId) sees
+    //          every store's jobs, a store owner stays scoped to their own.
     // @route   GET /api/archive/jobs
     getJobs: asyncHandler(async (req, res) => {
-        const jobs = await ArchiveJob.find({ storeId: req.tenantId })
+        const { status = '', startDate = '', endDate = '' } = req.query;
+        const isPlatformWide = req.user?.role === 'SUPER_ADMIN' && !req.tenantId;
+        const query = isPlatformWide ? {} : { storeId: req.tenantId };
+        if (status)
+            query.status = status;
+        if (startDate || endDate) {
+            query.createdAt = {};
+            if (startDate)
+                query.createdAt.$gte = dayjs(startDate).startOf('day').toDate();
+            if (endDate)
+                query.createdAt.$lte = dayjs(endDate).endOf('day').toDate();
+        }
+        let jobsQuery = ArchiveJob.find(query)
             .sort({ createdAt: -1 })
             .populate('triggeredBy', 'name email')
             .limit(20);
+        if (isPlatformWide)
+            jobsQuery = jobsQuery.populate('storeId', 'name');
+        const jobs = await jobsQuery;
         res.status(200).json(new ApiResponse(200, jobs, "Archive history retrieved"));
     }),
     // @desc    Trigger a manual archive

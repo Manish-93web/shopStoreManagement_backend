@@ -9,13 +9,17 @@ import dayjs from 'dayjs';
 // @desc    Get General Ledger (Financial Inflows/Outflows)
 // @route   GET /api/v1/accounting/ledger
 export const getGeneralLedger = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { startDate, endDate, transactionType } = req.query;
+    const { startDate, endDate, transactionType, search } = req.query;
     const query: any = { storeId: req.tenantId };
 
     if (startDate && endDate) {
         query.createdAt = {
-            $gte: dayjs(startDate as string).startOf('day').toDate(),
-            $lte: dayjs(endDate as string).endOf('day').toDate()
+            $gte: dayjs(startDate as string)
+                .startOf('day')
+                .toDate(),
+            $lte: dayjs(endDate as string)
+                .endOf('day')
+                .toDate(),
         };
     }
 
@@ -23,22 +27,36 @@ export const getGeneralLedger = asyncHandler(async (req: TenantRequest, res: Res
         query.type = transactionType;
     }
 
+    if (search) {
+        const term = (search as string).trim();
+        query.$or = [
+            { transactionNumber: { $regex: term, $options: 'i' } },
+            { category: { $regex: term, $options: 'i' } },
+            { notes: { $regex: term, $options: 'i' } },
+        ];
+    }
+
     const transactions = await PaymentTransaction.find(query)
         .populate('performedBy', 'name')
         .sort({ sxAt: -1, createdAt: -1 });
 
     // Calculate Summary
-    const summary = transactions.reduce((acc, tx) => {
-        if (tx.type === 'Inflow') acc.totalInflow += tx.amount;
-        else acc.totalOutflow += tx.amount;
-        return acc;
-    }, { totalInflow: 0, totalOutflow: 0 });
+    const summary = transactions.reduce(
+        (acc, tx) => {
+            if (tx.type === 'Inflow') acc.totalInflow += tx.amount;
+            else acc.totalOutflow += tx.amount;
+            return acc;
+        },
+        { totalInflow: 0, totalOutflow: 0 }
+    );
 
-    res.status(200).json(new ApiResponse(200, {
-        transactions,
-        summary,
-        netBalance: summary.totalInflow - summary.totalOutflow
-    }));
+    res.status(200).json(
+        new ApiResponse(200, {
+            transactions,
+            summary,
+            netBalance: summary.totalInflow - summary.totalOutflow,
+        })
+    );
 });
 
 // @desc    Export Accounting CSV (Tally/ERP Compatible)
@@ -56,11 +74,11 @@ export const exportAccountingData = asyncHandler(async (req: TenantRequest, res:
         { header: 'Voucher Type', key: 'voucherType', width: 15 },
         { header: 'Credit (Inflow)', key: 'credit', width: 15 },
         { header: 'Debit (Outflow)', key: 'debit', width: 15 },
-        { header: 'Balance', key: 'balance', width: 15 }
+        { header: 'Balance', key: 'balance', width: 15 },
     ];
 
     let runningBalance = 0;
-    transactions.forEach(tx => {
+    transactions.forEach((tx) => {
         const isCredit = tx.type === 'Inflow';
         const amount = tx.amount;
         runningBalance += isCredit ? amount : -amount;
@@ -72,7 +90,7 @@ export const exportAccountingData = asyncHandler(async (req: TenantRequest, res:
             voucherType: tx.category,
             credit: isCredit ? amount : 0,
             debit: !isCredit ? amount : 0,
-            balance: runningBalance
+            balance: runningBalance,
         });
     });
 

@@ -48,8 +48,10 @@ export const getCustomers = asyncHandler(async (req: TenantRequest, res: Respons
     const limit = parseInt(req.query.limit as string) || 20;
     const skip = (page - 1) * limit;
     const search = (req.query.search as string)?.trim();
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
 
-    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}:s${search || ''}`;
+    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}:s${search || ''}:d${startDate || ''}-${endDate || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), 'Customers from cache'));
@@ -62,6 +64,9 @@ export const getCustomers = asyncHandler(async (req: TenantRequest, res: Respons
             { phone: { $regex: search, $options: 'i' } },
             { email: { $regex: search, $options: 'i' } },
         ];
+    }
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
 
     const customers = await Customer.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();

@@ -109,10 +109,41 @@ export const receivePurchaseOrder = asyncHandler(async (req, res) => {
 // @desc    Get all purchase orders
 // @route   GET /api/purchase-orders
 export const getPurchaseOrders = asyncHandler(async (req, res) => {
-    const pos = await PurchaseOrder.find({ storeId: req.tenantId })
-        .populate('supplier', 'name')
-        .sort({ createdAt: -1 });
-    res.status(200).json(new ApiResponse(200, pos));
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const status = req.query.status?.trim();
+    const supplier = req.query.supplier?.trim();
+    const search = req.query.search?.trim();
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
+    const query = { storeId: req.tenantId };
+    if (status)
+        query.status = status;
+    if (supplier)
+        query.supplier = supplier;
+    if (search)
+        query.poNumber = { $regex: search, $options: 'i' };
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+    const [pos, total] = await Promise.all([
+        PurchaseOrder.find(query)
+            .populate('supplier', 'name')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit),
+        PurchaseOrder.countDocuments(query),
+    ]);
+    res.status(200).json(new ApiResponse(200, {
+        purchaseOrders: pos,
+        pagination: {
+            total,
+            page,
+            limit,
+            pages: Math.ceil(total / limit),
+        },
+    }));
 });
 // @desc    Generate a PDF invoice/document for a Purchase Order
 // @route   GET /api/purchase-orders/:id/invoice

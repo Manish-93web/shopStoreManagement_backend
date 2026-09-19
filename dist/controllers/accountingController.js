@@ -6,7 +6,7 @@ import dayjs from 'dayjs';
 // @desc    Get General Ledger (Financial Inflows/Outflows)
 // @route   GET /api/v1/accounting/ledger
 export const getGeneralLedger = asyncHandler(async (req, res) => {
-    const { startDate, endDate, transactionType } = req.query;
+    const { startDate, endDate, transactionType, search } = req.query;
     const query = { storeId: req.tenantId };
     if (startDate && endDate) {
         query.createdAt = {
@@ -16,6 +16,14 @@ export const getGeneralLedger = asyncHandler(async (req, res) => {
     }
     if (transactionType && transactionType !== 'All') {
         query.type = transactionType;
+    }
+    if (search) {
+        const term = search.trim();
+        query.$or = [
+            { transactionNumber: { $regex: term, $options: 'i' } },
+            { category: { $regex: term, $options: 'i' } },
+            { notes: { $regex: term, $options: 'i' } },
+        ];
     }
     const transactions = await PaymentTransaction.find(query)
         .populate('performedBy', 'name')

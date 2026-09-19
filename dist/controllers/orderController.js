@@ -188,8 +188,12 @@ export const getOrders = asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
     const search = req.query.search?.trim();
+    const status = req.query.status?.trim();
+    const paymentMethod = req.query.paymentMethod?.trim();
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
     const ordersCacheVersion = await getCacheVersion(req.tenantId.toString(), 'orders');
-    const cacheKey = `orders:${req.tenantId}:v${ordersCacheVersion}:p${page}:l${limit}:s${search || ''}`;
+    const cacheKey = `orders:${req.tenantId}:v${ordersCacheVersion}:p${page}:l${limit}:s${search || ''}:st${status || ''}:pm${paymentMethod || ''}:d${startDate || ''}-${endDate || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached)
@@ -197,7 +201,23 @@ export const getOrders = asyncHandler(async (req, res) => {
     }
     const query = { storeId: req.tenantId };
     if (search) {
-        query.orderNumber = { $regex: search, $options: 'i' };
+        // Matches either the order number directly, or any customer whose name matches —
+        // a cashier is far more likely to remember "the sale to Anil" than an order number.
+        const matchingCustomers = await Customer.find({
+            storeId: req.tenantId,
+            name: { $regex: search, $options: 'i' },
+        }).select('_id');
+        query.$or = [
+            { orderNumber: { $regex: search, $options: 'i' } },
+            ...(matchingCustomers.length ? [{ customer: { $in: matchingCustomers.map((c) => c._id) } }] : []),
+        ];
+    }
+    if (status)
+        query.status = status;
+    if (paymentMethod)
+        query['paymentDetails.method'] = paymentMethod;
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
     const orders = await Order.find(query)
         .populate('customer')

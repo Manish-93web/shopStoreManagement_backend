@@ -4,14 +4,37 @@ import { notificationService } from '../services/notificationService.js';
 export const notificationController = {
     getNotifications: async (req, res) => {
         try {
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 50;
+            const skip = (page - 1) * limit;
+            const type = req.query.type?.trim();
+            const isReadParam = req.query.isRead?.trim();
+            const startDate = req.query.startDate;
+            const endDate = req.query.endDate;
             const query = { recipient: req.user?._id };
             if (req.tenantId && req.tenantId !== 'undefined' && req.tenantId !== 'null') {
                 query.storeId = req.tenantId;
             }
-            const notifications = await Notification.find(query)
-                .sort({ createdAt: -1 })
-                .limit(50);
-            res.json({ success: true, data: notifications });
+            if (type && ['INFO', 'WARNING', 'ERROR', 'SUCCESS'].includes(type)) {
+                query.type = type;
+            }
+            if (isReadParam === 'true' || isReadParam === 'false') {
+                query.isRead = isReadParam === 'true';
+            }
+            if (startDate && endDate) {
+                query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+            }
+            const [notifications, total] = await Promise.all([
+                Notification.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+                Notification.countDocuments(query),
+            ]);
+            res.json({
+                success: true,
+                data: {
+                    notifications,
+                    pagination: { total, page, limit, pages: Math.ceil(total / limit) || 1 },
+                },
+            });
         }
         catch (error) {
             res.status(500).json({ success: false, message: error.message });

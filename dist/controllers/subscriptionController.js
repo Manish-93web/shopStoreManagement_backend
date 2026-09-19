@@ -1,4 +1,5 @@
 import Razorpay from 'razorpay';
+import dayjs from 'dayjs';
 import Store from '../models/Store.js';
 import Plan from '../models/Plan.js';
 import SubscriptionInvoice from '../models/SubscriptionInvoice.js';
@@ -148,14 +149,33 @@ export const subscriptionController = {
     }),
     // @desc    Get platform-wide invoices (Super Admin)
     getSystemInvoices: asyncHandler(async (req, res) => {
-        const { page = 1, limit = 20 } = req.query;
-        const invoices = await SubscriptionInvoice.find()
+        const { page = 1, limit = 20, status = '', startDate = '', endDate = '', search = '' } = req.query;
+        const query = {};
+        if (status)
+            query.status = status;
+        if (startDate || endDate) {
+            // Filtered on createdAt (when the invoice was issued) rather than
+            // billingPeriod.start/end — simpler to reason about than an overlapping-range
+            // query, and matches the date semantics used by every other filter in this batch.
+            query.createdAt = {};
+            if (startDate)
+                query.createdAt.$gte = dayjs(startDate).startOf('day').toDate();
+            if (endDate)
+                query.createdAt.$lte = dayjs(endDate).endOf('day').toDate();
+        }
+        if (search) {
+            const term = search;
+            const matchingStores = await Store.find({ name: { $regex: term, $options: 'i' } }).select('_id');
+            const storeIds = matchingStores.map((s) => s._id);
+            query.$or = [{ invoiceNumber: { $regex: term, $options: 'i' } }, ...(storeIds.length ? [{ storeId: { $in: storeIds } }] : [])];
+        }
+        const invoices = await SubscriptionInvoice.find(query)
             .populate('storeId', 'name')
             .populate('ownerId', 'name email')
             .sort({ createdAt: -1 })
             .limit(Number(limit))
             .skip((Number(page) - 1) * Number(limit));
-        const total = await SubscriptionInvoice.countDocuments();
+        const total = await SubscriptionInvoice.countDocuments(query);
         res.status(200).json(new ApiResponse(200, {
             invoices,
             total,

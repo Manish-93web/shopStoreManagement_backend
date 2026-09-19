@@ -107,9 +107,35 @@ export const receiveTransfer = asyncHandler(async (req: TenantRequest, res: Resp
 // @desc    Get transfers for current store (Sent or Received)
 // @route   GET /api/transfers
 export const getTransfers = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const transfers = await Transfer.find({
-        $or: [{ fromStore: req.tenantId }, { toStore: req.tenantId }],
-    }).populate('fromStore toStore', 'name');
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+    const status = (req.query.status as string)?.trim();
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
 
-    res.status(200).json(new ApiResponse(200, transfers));
+    const query: any = {
+        $or: [{ fromStore: req.tenantId }, { toStore: req.tenantId }],
+    };
+    if (status) query.status = status;
+    if (startDate && endDate) {
+        query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+
+    const [transfers, total] = await Promise.all([
+        Transfer.find(query).populate('fromStore toStore', 'name').sort({ createdAt: -1 }).skip(skip).limit(limit),
+        Transfer.countDocuments(query),
+    ]);
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            transfers,
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
+            },
+        })
+    );
 });

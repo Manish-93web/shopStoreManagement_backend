@@ -11,10 +11,23 @@ import Store from '../models/Store.js';
 // @desc    Get all employees for a store
 // @route   GET /api/employees
 export const getEmployees = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const employees = await User.find({
+    const scopedRoles = [UserRole.MANAGER, UserRole.CASHIER, UserRole.STORE_OWNER];
+    const role = (req.query.role as string)?.trim();
+    const isActiveParam = (req.query.isActive as string)?.trim();
+
+    const query: any = {
         storeId: req.tenantId as any,
-        role: { $in: [UserRole.MANAGER, UserRole.CASHIER, UserRole.STORE_OWNER] }
-    }).select('-password -refreshToken');
+        role: { $in: scopedRoles },
+    };
+    // Only honor a role filter if it's one of the roles this endpoint already scopes to.
+    if (role && scopedRoles.includes(role as UserRole)) {
+        query.role = role;
+    }
+    if (isActiveParam === 'true' || isActiveParam === 'false') {
+        query.isActive = isActiveParam === 'true';
+    }
+
+    const employees = await User.find(query).select('-password -refreshToken');
     res.status(200).json(new ApiResponse(200, employees));
 });
 
@@ -34,7 +47,15 @@ export const createEmployee = asyncHandler(async (req: TenantRequest, res: Respo
         const plan = store.subscriptionPlan as any;
         const currentCount = await User.countDocuments({ storeId: req.tenantId });
         if (plan.maxUsers !== 0 && currentCount >= plan.maxUsers) {
-            return res.status(403).json(new ApiResponse(403, null, `User limit reached. Your current plan "${plan.name}" allows up to ${plan.maxUsers} users.`));
+            return res
+                .status(403)
+                .json(
+                    new ApiResponse(
+                        403,
+                        null,
+                        `User limit reached. Your current plan "${plan.name}" allows up to ${plan.maxUsers} users.`
+                    )
+                );
         }
     }
 
@@ -42,29 +63,45 @@ export const createEmployee = asyncHandler(async (req: TenantRequest, res: Respo
     session.startTransaction();
 
     try {
-        const user = await User.create([{
-            name,
-            email,
-            password,
-            role: role || UserRole.CASHIER,
-            storeId: req.tenantId as any,
-            stores: [req.tenantId as any]
-        }], { session });
+        const user = await User.create(
+            [
+                {
+                    name,
+                    email,
+                    password,
+                    role: role || UserRole.CASHIER,
+                    storeId: req.tenantId as any,
+                    stores: [req.tenantId as any],
+                },
+            ],
+            { session }
+        );
 
-        const employee = await Employee.create([{
-            user: user[0]._id,
-            employeeId: `EMP-${Date.now()}`,
-            storeId: req.tenantId as any,
-            designation: designation || 'Staff',
-            salary: salary || { base: 0, currency: 'INR', frequency: 'Monthly' },
-            joiningDate: joiningDate || new Date()
-        }], { session });
+        const employee = await Employee.create(
+            [
+                {
+                    user: user[0]._id,
+                    employeeId: `EMP-${Date.now()}`,
+                    storeId: req.tenantId as any,
+                    designation: designation || 'Staff',
+                    salary: salary || { base: 0, currency: 'INR', frequency: 'Monthly' },
+                    joiningDate: joiningDate || new Date(),
+                },
+            ],
+            { session }
+        );
 
         await session.commitTransaction();
-        res.status(201).json(new ApiResponse(201, {
-            user: user[0],
-            employee: employee[0]
-        }, 'Employee created successfully'));
+        res.status(201).json(
+            new ApiResponse(
+                201,
+                {
+                    user: user[0],
+                    employee: employee[0],
+                },
+                'Employee created successfully'
+            )
+        );
     } catch (error: any) {
         await session.abortTransaction();
         res.status(500).json(new ApiResponse(500, null, error.message));
@@ -106,32 +143,32 @@ export const getStaffPerformance = asyncHandler(async (req: TenantRequest, res: 
         { $match: { storeId: new mongoose.Types.ObjectId(req.tenantId as string), status: 'Completed' } },
         {
             $group: {
-                _id: "$cashier",
-                totalSales: { $sum: "$grandTotal" },
+                _id: '$cashier',
+                totalSales: { $sum: '$grandTotal' },
                 ordersCount: { $sum: 1 },
-                averageOrderValue: { $avg: "$grandTotal" }
-            }
+                averageOrderValue: { $avg: '$grandTotal' },
+            },
         },
         {
             $lookup: {
-                from: "users",
-                localField: "_id",
-                foreignField: "_id",
-                as: "employee"
-            }
+                from: 'users',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'employee',
+            },
         },
-        { $unwind: "$employee" },
+        { $unwind: '$employee' },
         {
             $project: {
-                name: "$employee.name",
-                role: "$employee.role",
+                name: '$employee.name',
+                role: '$employee.role',
                 totalSales: 1,
                 ordersCount: 1,
-                averageOrderValue: 1
-            }
+                averageOrderValue: 1,
+            },
         },
-        { $sort: { totalSales: -1 } }
+        { $sort: { totalSales: -1 } },
     ]);
 
-    res.status(200).json(new ApiResponse(200, metrics, "Staff performance metrics retrieved"));
+    res.status(200).json(new ApiResponse(200, metrics, 'Staff performance metrics retrieved'));
 });
