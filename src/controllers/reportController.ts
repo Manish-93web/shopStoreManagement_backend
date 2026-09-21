@@ -487,6 +487,16 @@ export const exportReport = asyncHandler(async (req: TenantRequest, res: Respons
                 );
                 doc.moveDown(0.5);
             });
+        } else if (type === 'customer-dues') {
+            const customers = await Customer.find({ storeId: req.tenantId, dueBalance: { $gt: 0 } }).sort({
+                dueBalance: -1,
+            });
+            customers.forEach((c) => {
+                doc.fontSize(10).text(
+                    `${c.name} | Phone: ${c.phone} | Segment: ${c.segment} | Outstanding: ${c.dueBalance.toFixed(2)} | Updated: ${new Date((c as any).updatedAt).toLocaleDateString()}`
+                );
+                doc.moveDown(0.5);
+            });
         }
 
         doc.end();
@@ -637,6 +647,26 @@ export const exportReport = asyncHandler(async (req: TenantRequest, res: Respons
                 grandTotal: po.grandTotal,
                 status: po.status,
                 createdAt: po.createdAt.toISOString(),
+            })
+        );
+    } else if (type === 'customer-dues') {
+        const customers = await Customer.find({ storeId: req.tenantId, dueBalance: { $gt: 0 } }).sort({
+            dueBalance: -1,
+        });
+        worksheet.columns = [
+            { header: 'Name', key: 'name', width: 25 },
+            { header: 'Phone', key: 'phone', width: 20 },
+            { header: 'Segment', key: 'segment', width: 15 },
+            { header: 'Outstanding Due', key: 'dueBalance', width: 18 },
+            { header: 'Last Updated', key: 'updatedAt', width: 25 },
+        ];
+        customers.forEach((c: any) =>
+            worksheet.addRow({
+                name: c.name,
+                phone: c.phone,
+                segment: c.segment,
+                dueBalance: c.dueBalance,
+                updatedAt: c.updatedAt.toISOString(),
             })
         );
     }

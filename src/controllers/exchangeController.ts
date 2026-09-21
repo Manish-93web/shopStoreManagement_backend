@@ -92,6 +92,16 @@ export const createExchange = asyncHandler(async (req: TenantRequest, res: Respo
             paymentDetails.push({ method: paymentMethod || 'Cash', amount: diff });
         }
 
+        // Computed the same way as a regular POS sale, rather than assumed — the
+        // Store Credit + shortfall-payment lines above always sum to newTotal today,
+        // but deriving it keeps this order's paymentStatus/amountDue honest if that
+        // ever changes.
+        const totalCollected = paymentDetails.reduce((sum: number, p: any) => sum + p.amount, 0);
+        const amountDue = Math.max(Math.round((newTotal - totalCollected) * 100) / 100, 0);
+        const amountPaid = newTotal - amountDue;
+        const paymentStatus: 'Paid' | 'Unpaid' | 'Partial' =
+            amountDue <= 0.01 ? 'Paid' : amountPaid <= 0.01 ? 'Unpaid' : 'Partial';
+
         const [newOrder] = await Order.create(
             [
                 {
@@ -104,9 +114,11 @@ export const createExchange = asyncHandler(async (req: TenantRequest, res: Respo
                     taxType: originalOrder.taxType,
                     discountTotal: 0,
                     grandTotal: newTotal,
+                    amountPaid,
+                    amountDue,
                     paymentDetails,
                     cashier: req.user._id,
-                    paymentStatus: 'Paid',
+                    paymentStatus,
                 },
             ],
             { session }

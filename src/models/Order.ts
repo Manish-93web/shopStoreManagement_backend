@@ -41,6 +41,8 @@ export interface IOrder extends Document {
     discountTotal: number;
     discountReason?: string;
     grandTotal: number;
+    amountPaid: number;
+    amountDue: number;
     loyaltyPointsUsed?: number;
     paymentDetails: IPaymentDetail[];
     status: 'Pending' | 'Completed' | 'Cancelled';
@@ -82,6 +84,8 @@ const OrderSchema: Schema = new Schema(
         discountTotal: { type: Number, default: 0 },
         discountReason: { type: String },
         grandTotal: { type: Number, required: true },
+        amountPaid: { type: Number, required: true },
+        amountDue: { type: Number, required: true, default: 0 },
         loyaltyPointsUsed: { type: Number, default: 0 },
         paymentDetails: [
             {

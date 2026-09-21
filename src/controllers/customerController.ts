@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
 import Order from '../models/Order.js';
 import Wallet from '../models/Wallet.js';
+import CustomerDue from '../models/CustomerDue.js';
 import AuditLog from '../models/AuditLog.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
@@ -139,12 +140,16 @@ export const getCustomerById = asyncHandler(async (req: TenantRequest, res: Resp
         .sort({ createdAt: -1 })
         .limit(20);
 
+    const due = await CustomerDue.findOne({ customer: customer._id, storeId: req.tenantId });
+    const dueHistory = due ? due.transactions.slice(-20).reverse() : [];
+
     res.status(200).json(
         new ApiResponse(200, {
             ...customer.toObject(),
             recentOrders,
             totalSpend: totalSpend[0]?.total || 0,
             activityLog,
+            dueHistory,
         })
     );
 });
@@ -269,6 +274,118 @@ export const updateWalletBalance = asyncHandler(async (req: TenantRequest, res: 
 
     res.status(200).json(
         new ApiResponse(200, customer, `Wallet ${action}ed successfully. New Balance: ${customer.walletBalance}`)
+    );
+});
+
+// @desc    Record a payment against a customer's outstanding dues (from a partial/
+//          unpaid order) — mirrors updateWalletBalance's transactional pattern.
+// @route   POST /api/customers/:id/dues/payment
+export const recordDuePayment = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { amount, method, reference, reason } = req.body;
+
+    if (!amount || amount <= 0) {
+        return res.status(400).json(new ApiResponse(400, null, 'Invalid amount'));
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    let customer;
+    try {
+        customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId }).session(session);
+        if (!customer) {
+            await session.abortTransaction();
+            return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
+        }
+
+        if (amount > customer.dueBalance) {
+            await session.abortTransaction();
+            return res.status(400).json(new ApiResponse(400, null, 'Payment exceeds outstanding balance'));
+        }
+
+        const newBalance = customer.dueBalance - amount;
+        customer.dueBalance = newBalance;
+        await customer.save({ session });
+
+        await CustomerDue.findOneAndUpdate(
+            { customer: customer._id, storeId: req.tenantId },
+            {
+                $inc: { balance: -amount },
+                $push: {
+                    transactions: {
+                        type: 'PAYMENT',
+                        amount,
+                        reason:
+                            reason || `Payment received via ${method || 'Cash'}${reference ? ` (${reference})` : ''}`,
+                        date: new Date(),
+                    },
+                },
+            },
+            { session, upsert: true }
+        );
+
+        await AuditLog.create(
+            [
+                {
+                    userId: req.user?._id,
+                    storeId: req.tenantId,
+                    action: 'DUE_PAYMENT_RECEIVED',
+                    entity: 'Customer',
+                    entityId: customer._id,
+                    details: `Recorded payment of ${amount} against dues. New balance: ${newBalance}`,
+                },
+            ],
+            { session }
+        );
+
+        await session.commitTransaction();
+    } catch (err) {
+        await session.abortTransaction();
+        throw err;
+    } finally {
+        session.endSession();
+    }
+
+    res.status(200).json(
+        new ApiResponse(200, customer, `Payment recorded successfully. New Balance Due: ${customer.dueBalance}`)
+    );
+});
+
+// @desc    List customers with an outstanding due balance (accounts receivable)
+// @route   GET /api/customers/dues
+export const getCustomersWithDues = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+    const search = (req.query.search as string)?.trim();
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+
+    const query: any = { storeId: req.tenantId, dueBalance: { $gt: 0 } };
+    if (search) {
+        query.$or = [{ name: { $regex: search, $options: 'i' } }, { phone: { $regex: search, $options: 'i' } }];
+    }
+    if (startDate && endDate) {
+        query.updatedAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+
+    const customers = await Customer.find(query).sort({ dueBalance: -1 }).skip(skip).limit(limit).lean();
+    const total = await Customer.countDocuments(query);
+    const totalOutstanding = await Customer.aggregate([
+        { $match: { storeId: new mongoose.Types.ObjectId(req.tenantId as string), dueBalance: { $gt: 0 } } },
+        { $group: { _id: null, total: { $sum: '$dueBalance' } } },
+    ]);
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            customers,
+            totalOutstanding: totalOutstanding[0]?.total || 0,
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
+            },
+        })
     );
 });
 

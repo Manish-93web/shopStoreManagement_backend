@@ -19,6 +19,7 @@ import webhookService from '../services/webhookService.js';
 import Coupon from '../models/Coupon.js';
 import Loyalty from '../models/Loyalty.js';
 import redisClient, { bumpCacheVersion, getCacheVersion } from '../config/redis.js';
+import CustomerDue from '../models/CustomerDue.js';
 
 // @desc    Create a new POS order
 // @route   POST /api/orders
@@ -39,6 +40,21 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
     } = req.body;
 
     const orderNumber = `ORD-${Date.now()}`;
+
+    // Payment status/amounts are computed server-side from what was actually
+    // collected, never trusted from the client — a sale that falls short of the
+    // total is a partial/unpaid credit sale, which can only be recorded against
+    // a real customer (walk-ins must pay in full).
+    const totalCollected = paymentDetails.reduce((acc: number, p: any) => acc + p.amount, 0);
+    const amountDue = Math.max(Math.round((grandTotal - totalCollected) * 100) / 100, 0);
+    const amountPaid = grandTotal - amountDue;
+    if (amountDue > 0.01 && !customerId) {
+        return res
+            .status(400)
+            .json(new ApiResponse(400, null, 'Select a customer to record a partial or unpaid sale.'));
+    }
+    const paymentStatus: 'Paid' | 'Unpaid' | 'Partial' =
+        amountDue <= 0.01 ? 'Paid' : amountPaid <= 0.01 ? 'Unpaid' : 'Partial';
 
     // 0. Increment Coupon usage if applicable
     if (couponCode) {
@@ -102,11 +118,12 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
         discountTotal,
         discountReason,
         grandTotal,
+        amountPaid,
+        amountDue,
         paymentDetails,
         loyaltyPointsUsed,
         cashier: req.user._id,
-        paymentStatus:
-            paymentDetails.reduce((acc: number, p: any) => acc + p.amount, 0) >= grandTotal ? 'Paid' : 'Partial',
+        paymentStatus,
     });
 
     // Write accurate PaymentTransactions for Audit Tracing
@@ -123,6 +140,28 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
         notes: `Payment for Order ${orderNumber}`,
     }));
     await PaymentTransaction.insertMany(paymentOps);
+
+    // 1b. Record the shortfall against the customer's dues ledger (customerId is
+    // guaranteed present here — enforced by the amountDue/customerId check above).
+    if (amountDue > 0.01) {
+        await CustomerDue.findOneAndUpdate(
+            { customer: customerId, storeId: req.tenantId },
+            {
+                $inc: { balance: amountDue },
+                $push: {
+                    transactions: {
+                        type: 'CHARGE',
+                        amount: amountDue,
+                        reason: `Order ${orderNumber}`,
+                        orderId: order._id,
+                        date: new Date(),
+                    },
+                },
+            },
+            { upsert: true }
+        );
+        await Customer.findByIdAndUpdate(customerId, { $inc: { dueBalance: amountDue } });
+    }
 
     // 2. Handle Customer Loyalty
     if (customerId) {
@@ -234,11 +273,12 @@ export const getOrders = asyncHandler(async (req: TenantRequest, res: Response) 
     const search = (req.query.search as string)?.trim();
     const status = (req.query.status as string)?.trim();
     const paymentMethod = (req.query.paymentMethod as string)?.trim();
+    const paymentStatus = (req.query.paymentStatus as string)?.trim();
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
 
     const ordersCacheVersion = await getCacheVersion(req.tenantId!.toString(), 'orders');
-    const cacheKey = `orders:${req.tenantId}:v${ordersCacheVersion}:p${page}:l${limit}:s${search || ''}:st${status || ''}:pm${paymentMethod || ''}:d${startDate || ''}-${endDate || ''}`;
+    const cacheKey = `orders:${req.tenantId}:v${ordersCacheVersion}:p${page}:l${limit}:s${search || ''}:st${status || ''}:pm${paymentMethod || ''}:ps${paymentStatus || ''}:d${startDate || ''}-${endDate || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), 'Orders from cache'));
@@ -259,6 +299,7 @@ export const getOrders = asyncHandler(async (req: TenantRequest, res: Response) 
     }
     if (status) query.status = status;
     if (paymentMethod) query['paymentDetails.method'] = paymentMethod;
+    if (paymentStatus) query.paymentStatus = paymentStatus;
     if (startDate && endDate) {
         query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
@@ -362,6 +403,37 @@ export const cancelOrder = asyncHandler(async (req: TenantRequest, res: Response
                 { $inc: { walletBalance: walletPayment.amount } },
                 { session }
             );
+        }
+
+        if (order.amountDue > 0.01 && order.customer) {
+            // The ledger is a running balance, not per-order-allocated (same
+            // simplification as the Wallet ledger) — if the customer already paid
+            // down some of this due before cancelling, reverse only what's still
+            // actually outstanding, never driving the balance negative.
+            const dueCustomer = await Customer.findById(order.customer).session(session);
+            const reversalAmount = Math.min(order.amountDue, dueCustomer?.dueBalance || 0);
+            if (reversalAmount > 0.01) {
+                await CustomerDue.findOneAndUpdate(
+                    { customer: order.customer, storeId: req.tenantId },
+                    {
+                        $inc: { balance: -reversalAmount },
+                        $push: {
+                            transactions: {
+                                type: 'ADJUSTMENT',
+                                amount: reversalAmount,
+                                reason: `Order ${order.orderNumber} cancelled`,
+                                date: new Date(),
+                            },
+                        },
+                    },
+                    { session }
+                );
+                await Customer.findByIdAndUpdate(
+                    order.customer,
+                    { $inc: { dueBalance: -reversalAmount } },
+                    { session }
+                );
+            }
         }
 
         if (order.loyaltyPointsUsed && order.customer) {

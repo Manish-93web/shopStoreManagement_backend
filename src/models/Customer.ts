@@ -9,6 +9,7 @@ export interface ICustomer extends Document {
     gstin?: string;
     loyaltyPoints: number;
     walletBalance: number;
+    dueBalance: number;
     segment: 'Retail' | 'Wholesale' | 'VIP';
     storeId: mongoose.Types.ObjectId; // Multi-tenancy
     notes?: string;
@@ -27,6 +28,7 @@ const CustomerSchema: Schema = new Schema(
         gstin: { type: String },
         loyaltyPoints: { type: Number, default: 0 },
         walletBalance: { type: Number, default: 0 },
+        dueBalance: { type: Number, default: 0 },
         segment: { type: String, enum: ['Retail', 'Wholesale', 'VIP'], default: 'Retail' },
         storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
         notes: { type: String, default: '' },
