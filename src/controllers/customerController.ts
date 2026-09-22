@@ -389,6 +389,149 @@ export const getCustomersWithDues = asyncHandler(async (req: TenantRequest, res:
     );
 });
 
+// @desc    List B2B "shops" this store supplies products to — Wholesale-segment
+//          customers, with per-shop supply totals (quantity/value/paid/due).
+//          A shop IS a Customer (segment: 'Wholesale') and a supply is a regular
+//          Order — no separate model, this only adds the aggregate view over
+//          the existing data.
+// @route   GET /api/customers/shops
+export const getSupplyShops = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+    const search = (req.query.search as string)?.trim();
+
+    const query: any = { storeId: req.tenantId, segment: 'Wholesale' };
+    if (search) {
+        query.$or = [{ name: { $regex: search, $options: 'i' } }, { phone: { $regex: search, $options: 'i' } }];
+    }
+
+    const shops = await Customer.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+    const total = await Customer.countDocuments(query);
+    const shopIds = shops.map((s) => s._id);
+
+    const [facetResult] = await Order.aggregate([
+        {
+            $match: {
+                storeId: new mongoose.Types.ObjectId(req.tenantId as string),
+                customer: { $in: shopIds },
+                status: { $ne: 'Cancelled' },
+            },
+        },
+        {
+            $facet: {
+                orderLevel: [
+                    { $group: { _id: '$customer', totalOrders: { $sum: 1 }, totalValue: { $sum: '$grandTotal' } } },
+                ],
+                itemLevel: [
+                    { $unwind: '$items' },
+                    { $group: { _id: '$customer', totalQuantitySupplied: { $sum: '$items.quantity' } } },
+                ],
+            },
+        },
+    ]);
+
+    const orderStatsById = new Map((facetResult?.orderLevel || []).map((s: any) => [s._id.toString(), s]));
+    const qtyStatsById = new Map((facetResult?.itemLevel || []).map((s: any) => [s._id.toString(), s]));
+
+    const shopsWithStats = shops.map((shop: any) => {
+        const orderStats: any = orderStatsById.get(shop._id.toString()) || { totalOrders: 0, totalValue: 0 };
+        const qtyStats: any = qtyStatsById.get(shop._id.toString()) || { totalQuantitySupplied: 0 };
+        const dueBalance = shop.dueBalance || 0;
+        return {
+            ...shop,
+            totalOrders: orderStats.totalOrders,
+            totalValue: orderStats.totalValue,
+            totalQuantitySupplied: qtyStats.totalQuantitySupplied,
+            totalPaid: Math.max(orderStats.totalValue - dueBalance, 0),
+            dueBalance,
+        };
+    });
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            shops: shopsWithStats,
+            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+        })
+    );
+});
+
+// @desc    Per-product breakdown of what's been supplied to one shop, plus totals.
+// @route   GET /api/customers/:id/supply-summary
+export const getSupplyOrderSummary = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId });
+    if (!customer) {
+        return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
+    }
+
+    const matchStage = {
+        storeId: new mongoose.Types.ObjectId(req.tenantId as string),
+        customer: customer._id,
+        status: { $ne: 'Cancelled' },
+    };
+
+    const [orderLevel] = await Order.aggregate([
+        { $match: matchStage },
+        { $group: { _id: null, totalOrders: { $sum: 1 }, totalValue: { $sum: '$grandTotal' } } },
+    ]);
+
+    const productBreakdown = await Order.aggregate([
+        { $match: matchStage },
+        { $unwind: '$items' },
+        {
+            $group: {
+                _id: '$items.product',
+                name: { $first: '$items.name' },
+                totalQuantity: { $sum: '$items.quantity' },
+                totalValue: { $sum: '$items.total' },
+            },
+        },
+        { $sort: { totalQuantity: -1 } },
+    ]);
+
+    const totalOrders = orderLevel?.totalOrders || 0;
+    const totalValue = orderLevel?.totalValue || 0;
+    const totalQuantitySupplied = productBreakdown.reduce((sum, p) => sum + p.totalQuantity, 0);
+    const dueBalance = customer.dueBalance || 0;
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            totalOrders,
+            totalValue,
+            totalQuantitySupplied,
+            totalPaid: Math.max(totalValue - dueBalance, 0),
+            dueBalance,
+            products: productBreakdown.map((p) => ({
+                productId: p._id,
+                name: p.name,
+                totalQuantity: p.totalQuantity,
+                totalValue: p.totalValue,
+            })),
+        })
+    );
+});
+
+// @desc    Log that a WhatsApp template message was sent to this customer
+//          directly (not tied to a specific order) — mirrors
+//          orderController.logWhatsAppSent for the customer-level templates.
+// @route   POST /api/customers/:id/whatsapp-log
+export const logCustomerWhatsAppSent = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { template } = req.body;
+    const customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId });
+    if (!customer) {
+        return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
+    }
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'WHATSAPP_SENT',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `Sent "${template || 'WhatsApp'}" message`,
+    });
+    res.status(200).json(new ApiResponse(200, null, 'Logged'));
+});
+
 // @desc    Get top-level customer CRM analytics
 // @route   GET /api/customers/analytics/summary
 export const getCustomerAnalytics = asyncHandler(async (req: TenantRequest, res: Response) => {

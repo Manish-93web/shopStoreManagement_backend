@@ -43,6 +43,7 @@ import featureFlagRoutes from './routes/featureFlagRoutes.js';
 import themeRoutes from './routes/themeRoutes.js';
 import accountingRoutes from './routes/accountingRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
+import scheduledMessageRoutes from './routes/scheduledMessageRoutes.js';
 import { stripeWebhook, razorpayWebhook } from './controllers/webhookController.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -151,6 +152,7 @@ v1.use('/categories', categoryRoutes);
 v1.use('/orders', orderRoutes);
 v1.use('/purchase-orders', purchaseOrderRoutes);
 v1.use('/customers', customerRoutes);
+v1.use('/scheduled-messages', scheduledMessageRoutes);
 v1.use('/wallets', walletRoutes);
 v1.use('/stores', storeRoutes);
 

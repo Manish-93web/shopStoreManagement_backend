@@ -12,6 +12,7 @@ import {
     updateWalletBalance,
     recordDuePayment,
     getCustomersWithDues,
+    logCustomerWhatsAppSent,
     getCustomerAnalytics,
     exportCustomers,
     importCustomers,
@@ -54,5 +55,7 @@ router.route('/:id/loyalty').post(updateLoyaltyPoints);
 router.route('/:id/wallet').post(updateWalletBalance);
 
 router.route('/:id/dues/payment').post(recordDuePayment);
+
+router.route('/:id/whatsapp-log').post(logCustomerWhatsAppSent);
 
 export default router;

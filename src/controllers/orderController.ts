@@ -486,3 +486,29 @@ export const cancelOrder = asyncHandler(async (req: TenantRequest, res: Response
 
     res.status(200).json(new ApiResponse(200, order, 'Order cancelled'));
 });
+
+// @desc    Log that a WhatsApp template message was sent to a customer for this
+//          order — this app has no WhatsApp Business Content Template support, so
+//          the actual send happens client-side via a wa.me deep link the shop
+//          owner sends themselves; this just records that it happened, attributed
+//          to the customer so it surfaces on their existing Activity Log tab.
+// @route   POST /api/orders/:id/whatsapp-log
+// @access  Private (Cashier/Manager/Owner)
+export const logWhatsAppSent = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { template } = req.body;
+    const order = await Order.findOne({ _id: req.params.id, storeId: req.tenantId });
+    if (!order) {
+        return res.status(404).json(new ApiResponse(404, null, 'Order not found'));
+    }
+    if (order.customer) {
+        await AuditLog.create({
+            userId: req.user?._id,
+            storeId: req.tenantId,
+            action: 'WHATSAPP_SENT',
+            entity: 'Customer',
+            entityId: order.customer,
+            details: `Sent "${template || 'WhatsApp'}" message for order ${order.orderNumber}`,
+        });
+    }
+    res.status(200).json(new ApiResponse(200, null, 'Logged'));
+});

@@ -13,6 +13,7 @@ import Store from './models/Store.js';
 import { archiveService } from './services/archiveService.js';
 import { initReportScheduler } from './utils/scheduler.js';
 import { runDailyInventoryChecks } from './jobs/inventoryCheckJob.js';
+import { runScheduledMessageCheck } from './jobs/scheduledMessageJob.js';
 
 import { initNotificationWorker } from './workers/notificationWorker.js';
 
@@ -46,12 +47,24 @@ export const initInventoryCheckCron = () => {
     });
 };
 
+export const initScheduledMessageCron = () => {
+    // Check every minute for due WhatsApp reminders
+    cron.schedule('* * * * *', async () => {
+        try {
+            await runScheduledMessageCheck();
+        } catch (error) {
+            console.error('Scheduled message cron failed:', error);
+        }
+    });
+};
+
 // Initialize Workers
 initNotificationWorker();
 initBackupCron();
 initArchiveCronJob();
 initReportScheduler();
 initInventoryCheckCron();
+initScheduledMessageCron();
 
 const PORT = process.env.PORT || 5000;
 const httpServer = createServer(app);
