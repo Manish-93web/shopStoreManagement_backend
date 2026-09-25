@@ -7,6 +7,7 @@ import RestoreJob from '../models/RestoreJob.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { runBackupForStore } from '../services/backupService.js';
+import { downloadBackupFromS3, parseS3Key } from '../config/s3.js';
 export const backupController = {
     // @desc    Export store data as direct download
     // @route   GET /api/backup/export
@@ -54,9 +55,13 @@ export const backupController = {
         if (startDate || endDate) {
             query.createdAt = {};
             if (startDate)
-                query.createdAt.$gte = dayjs(startDate).startOf('day').toDate();
+                query.createdAt.$gte = dayjs(startDate)
+                    .startOf('day')
+                    .toDate();
             if (endDate)
-                query.createdAt.$lte = dayjs(endDate).endOf('day').toDate();
+                query.createdAt.$lte = dayjs(endDate)
+                    .endOf('day')
+                    .toDate();
         }
         let historyQuery = BackupJob.find(query)
             .sort({ createdAt: -1 })
@@ -83,8 +88,12 @@ export const backupController = {
             restoredBy: userId,
         });
         try {
-            const filePath = path.join(process.cwd(), backup.fileUrl);
-            const content = await fs.readFile(filePath, 'utf-8');
+            // Restore previously only ever worked for local-disk backups — a
+            // backup actually written to S3 (fileUrl looks like "s3://bucket/key",
+            // not a filesystem path) would fail here with ENOENT every time.
+            const content = backup.storageLocation === 's3'
+                ? await downloadBackupFromS3(parseS3Key(backup.fileUrl))
+                : await fs.readFile(path.join(process.cwd(), backup.fileUrl), 'utf-8');
             const data = JSON.parse(content);
             // Dynamic restoration
             for (const [colName, docs] of Object.entries(data)) {

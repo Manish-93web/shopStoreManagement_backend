@@ -12,6 +12,8 @@ import {
     updateWalletBalance,
     recordDuePayment,
     getCustomersWithDues,
+    getSupplyShops,
+    getSupplyOrderSummary,
     logCustomerWhatsAppSent,
     getCustomerAnalytics,
     exportCustomers,
@@ -46,9 +48,12 @@ router.route('/').get(getCustomers).post(sanitizeFields('notes'), createCustomer
 router.get('/analytics/summary', getCustomerAnalytics);
 router.get('/export', exportCustomers);
 router.get('/dues', getCustomersWithDues);
+router.get('/shops', getSupplyShops);
 router.post('/import', upload.single('file'), importCustomers);
 
 router.route('/:id').get(getCustomerById).put(sanitizeFields('notes'), updateCustomer).delete(deleteCustomer);
+
+router.route('/:id/supply-summary').get(getSupplyOrderSummary);
 
 router.route('/:id/loyalty').post(updateLoyaltyPoints);
 

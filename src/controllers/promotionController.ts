@@ -9,9 +9,15 @@ import PromotionRule from '../models/PromotionRule.js';
 export const promotionController = {
     // @desc    Validate coupon for POS
     validate: asyncHandler(async (req: TenantRequest, res: Response) => {
-        const { code, cartTotal, customerId } = req.body;
+        const { code, cartTotal, cartItems, customerId } = req.body;
         try {
-            const result = await promotionService.validateCoupon(code, cartTotal, customerId, req.tenantId as any);
+            const result = await promotionService.validateCoupon(
+                code,
+                cartTotal,
+                cartItems || [],
+                customerId,
+                req.tenantId as any
+            );
             res.status(200).json(new ApiResponse(200, result, 'Coupon valid'));
         } catch (error: any) {
             res.status(400).json(new ApiResponse(400, null, error.message));

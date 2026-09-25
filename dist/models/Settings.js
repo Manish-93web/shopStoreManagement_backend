@@ -21,6 +21,12 @@ const SettingsSchema = new Schema({
         lowStockThreshold: { type: Number, default: 10 },
         enableEmail: { type: Boolean, default: true },
         enableSMS: { type: Boolean, default: false }
+    },
+    archiveConfig: {
+        autoArchiveEnabled: { type: Boolean, default: false },
+        orderRetentionMonths: { type: Number, default: 24 },
+        notificationRetentionDays: { type: Number, default: 30 },
+        auditLogRetentionMonths: { type: Number, default: 6 }
     }
 }, { timestamps: true });
 export default mongoose.model('Settings', SettingsSchema);

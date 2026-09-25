@@ -10,6 +10,7 @@ import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import ExcelJS from 'exceljs';
 import redisClient from '../config/redis.js';
+import webhookService from '../services/webhookService.js';
 
 // @desc    Add loyalty points to customer
 // @route   POST /api/customers/:id/loyalty
@@ -51,8 +52,12 @@ export const getCustomers = asyncHandler(async (req: TenantRequest, res: Respons
     const search = (req.query.search as string)?.trim();
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
+    // Supply Shops (segment: 'Wholesale') get their own dedicated page/list —
+    // the general Customers page excludes them so its list/counts stay about
+    // retail-facing customers only.
+    const excludeSegment = (req.query.excludeSegment as string)?.trim();
 
-    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}:s${search || ''}:d${startDate || ''}-${endDate || ''}`;
+    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}:s${search || ''}:d${startDate || ''}-${endDate || ''}:ex${excludeSegment || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), 'Customers from cache'));
@@ -68,6 +73,9 @@ export const getCustomers = asyncHandler(async (req: TenantRequest, res: Respons
     }
     if (startDate && endDate) {
         query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+    if (excludeSegment) {
+        query.segment = { $ne: excludeSegment };
     }
 
     const customers = await Customer.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
@@ -104,6 +112,8 @@ export const createCustomer = asyncHandler(async (req: TenantRequest, res: Respo
         entityId: customer._id,
         details: `Created customer ${customer.name}`,
     });
+
+    webhookService.trigger('customer.created', req.tenantId!.toString(), customer);
 
     res.status(201).json(new ApiResponse(201, customer));
 });
@@ -537,7 +547,13 @@ export const logCustomerWhatsAppSent = asyncHandler(async (req: TenantRequest, r
 export const getCustomerAnalytics = asyncHandler(async (req: TenantRequest, res: Response) => {
     const storeId = req.tenantId;
 
-    const totalCustomers = await Customer.countDocuments({ storeId });
+    // Supply Shops (segment: 'Wholesale') have their own dedicated stats on the
+    // Supply Shops page — excluded here so these stay about retail customers.
+    const wholesaleIds = (await Customer.find({ storeId, segment: 'Wholesale' }).select('_id').lean()).map(
+        (c) => c._id
+    );
+
+    const totalCustomers = await Customer.countDocuments({ storeId, segment: { $ne: 'Wholesale' } });
 
     // Customers created in the last 30 days
     const thirtyDaysAgo = new Date();
@@ -545,6 +561,7 @@ export const getCustomerAnalytics = asyncHandler(async (req: TenantRequest, res:
 
     const newCustomers = await Customer.countDocuments({
         storeId,
+        segment: { $ne: 'Wholesale' },
         createdAt: { $gte: thirtyDaysAgo },
     });
 
@@ -555,7 +572,7 @@ export const getCustomerAnalytics = asyncHandler(async (req: TenantRequest, res:
             $match: {
                 storeId: new mongoose.Types.ObjectId(storeId as string),
                 status: 'Completed',
-                customer: { $exists: true, $ne: null },
+                customer: { $exists: true, $ne: null, $nin: wholesaleIds },
             },
         },
         { $group: { _id: '$customer', purchaseCount: { $sum: 1 } } },

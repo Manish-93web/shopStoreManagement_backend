@@ -10,7 +10,8 @@ const ArchiveJobSchema = new Schema({
     archivedCount: { type: Number, default: 0 },
     fileUrl: { type: String },
     triggeredBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    error: { type: String }
+    error: { type: String },
+    restoredAt: { type: Date }
 }, { timestamps: true });
 ArchiveJobSchema.index({ storeId: 1, createdAt: -1 });
 export default mongoose.model('ArchiveJob', ArchiveJobSchema);

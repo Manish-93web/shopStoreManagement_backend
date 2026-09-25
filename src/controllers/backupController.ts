@@ -9,6 +9,7 @@ import RestoreJob from '../models/RestoreJob.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { runBackupForStore } from '../services/backupService.js';
+import { downloadBackupFromS3, parseS3Key } from '../config/s3.js';
 
 export const backupController = {
     // @desc    Export store data as direct download
@@ -101,8 +102,13 @@ export const backupController = {
         });
 
         try {
-            const filePath = path.join(process.cwd(), backup.fileUrl);
-            const content = await fs.readFile(filePath, 'utf-8');
+            // Restore previously only ever worked for local-disk backups — a
+            // backup actually written to S3 (fileUrl looks like "s3://bucket/key",
+            // not a filesystem path) would fail here with ENOENT every time.
+            const content =
+                backup.storageLocation === 's3'
+                    ? await downloadBackupFromS3(parseS3Key(backup.fileUrl))
+                    : await fs.readFile(path.join(process.cwd(), backup.fileUrl), 'utf-8');
             const data = JSON.parse(content);
 
             // Dynamic restoration

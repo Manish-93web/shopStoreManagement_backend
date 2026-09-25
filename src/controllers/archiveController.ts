@@ -4,6 +4,7 @@ import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import dayjs from 'dayjs';
 import ArchiveJob from '../models/ArchiveJob.js';
+import Settings from '../models/Settings.js';
 import { archiveService } from '../services/archiveService.js';
 
 export const archiveController = {
@@ -52,5 +53,61 @@ export const archiveController = {
         }
 
         res.status(200).json(new ApiResponse(200, job, 'Archive job completed'));
+    }),
+
+    // @desc    Restore every order from a completed archive job back into the
+    //          live collection
+    // @route   POST /api/archive/:jobId/restore
+    restoreArchive: asyncHandler(async (req: TenantRequest, res: Response) => {
+        try {
+            const result = await archiveService.restoreArchivedOrders(req.params.jobId as string);
+            res.status(200).json(new ApiResponse(200, result, `Restored ${result.restoredCount} order(s)`));
+        } catch (error: any) {
+            res.status(400).json(new ApiResponse(400, null, error.message));
+        }
+    }),
+
+    // @desc    Get this store's archive retention policy — what the weekly
+    //          background job uses when it runs unattended, distinct from the
+    //          one-off "Run Archive Now" scan which always takes an explicit
+    //          months value from the request instead.
+    // @route   GET /api/archive/policy
+    getPolicy: asyncHandler(async (req: TenantRequest, res: Response) => {
+        if (!req.tenantId) return res.status(400).json(new ApiResponse(400, null, 'Select a store first'));
+        const settings = await Settings.findOne({ storeId: req.tenantId });
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                settings?.archiveConfig || {
+                    autoArchiveEnabled: false,
+                    orderRetentionMonths: 24,
+                    notificationRetentionDays: 30,
+                    auditLogRetentionMonths: 6,
+                }
+            )
+        );
+    }),
+
+    // @desc    Update this store's archive retention policy
+    // @route   PUT /api/archive/policy
+    updatePolicy: asyncHandler(async (req: TenantRequest, res: Response) => {
+        if (!req.tenantId) return res.status(400).json(new ApiResponse(400, null, 'Select a store first'));
+        const { autoArchiveEnabled, orderRetentionMonths, notificationRetentionDays, auditLogRetentionMonths } =
+            req.body;
+
+        const settings = await Settings.findOneAndUpdate(
+            { storeId: req.tenantId },
+            {
+                $set: {
+                    'archiveConfig.autoArchiveEnabled': !!autoArchiveEnabled,
+                    'archiveConfig.orderRetentionMonths': Math.max(1, Number(orderRetentionMonths) || 24),
+                    'archiveConfig.notificationRetentionDays': Math.max(1, Number(notificationRetentionDays) || 30),
+                    'archiveConfig.auditLogRetentionMonths': Math.max(1, Number(auditLogRetentionMonths) || 6),
+                },
+            },
+            { new: true, upsert: true, setDefaultsOnInsert: true }
+        );
+
+        res.status(200).json(new ApiResponse(200, settings.archiveConfig, 'Archive policy updated'));
     }),
 };

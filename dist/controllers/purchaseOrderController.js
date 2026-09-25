@@ -128,11 +128,7 @@ export const getPurchaseOrders = asyncHandler(async (req, res) => {
         query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
     const [pos, total] = await Promise.all([
-        PurchaseOrder.find(query)
-            .populate('supplier', 'name')
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit),
+        PurchaseOrder.find(query).populate('supplier', 'name').sort({ createdAt: -1 }).skip(skip).limit(limit),
         PurchaseOrder.countDocuments(query),
     ]);
     res.status(200).json(new ApiResponse(200, {

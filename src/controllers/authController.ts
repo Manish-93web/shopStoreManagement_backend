@@ -15,17 +15,27 @@ import { sendEmail } from '../utils/emailService.js';
 // @route   POST /api/auth/register
 // @access  Public
 export const register = asyncHandler(async (req: Request, res: Response) => {
-    const { name, email, password, storeName, shopType } = req.body;
+    const { name, email, phone, password, storeName, shopType } = req.body;
+
+    if (!phone || !/^\d{10}$/.test(phone)) {
+        return res.status(400).json(new ApiResponse(400, null, 'A valid 10-digit mobile number is required'));
+    }
 
     const userExists = await User.findOne({ email });
     if (userExists) {
         return res.status(400).json(new ApiResponse(400, null, 'User already exists'));
     }
 
+    const phoneTaken = await User.findOne({ phone });
+    if (phoneTaken) {
+        return res.status(400).json(new ApiResponse(400, null, 'This mobile number is already registered'));
+    }
+
     // Create User (Store Owner)
     const user = await User.create({
         name,
         email,
+        phone,
         password,
         role: UserRole.STORE_OWNER,
     });
@@ -140,6 +150,17 @@ export const logout = asyncHandler(async (req: any, res: Response) => {
     if (user) {
         user.refreshToken = undefined;
         await user.save();
+
+        // Create Audit Log — so a staff member's activity trail shows when
+        // they signed out, not just when they signed in.
+        await logAudit({
+            req,
+            storeId: user.storeId || (user.stores && user.stores[0]),
+            userId: user._id,
+            action: 'LOGOUT',
+            entity: 'User',
+            entityId: user._id,
+        });
     }
 
     res.status(200).json(new ApiResponse(200, null, 'Logged out successfully'));

@@ -1,5 +1,11 @@
 import express from 'express';
-import { getApiKeys, createApiKey, updateApiKey, deleteApiKey } from '../controllers/apiKeyController.js';
+import {
+    getApiKeys,
+    createApiKey,
+    updateApiKey,
+    deleteApiKey,
+    getApiKeyUsage,
+} from '../controllers/apiKeyController.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { tenantHandler } from '../middleware/tenantHandler.js';
 
@@ -14,5 +20,6 @@ router.use(authorize('STORE_OWNER'));
 router.route('/').get(getApiKeys).post(createApiKey);
 
 router.route('/:id').put(updateApiKey).delete(deleteApiKey);
+router.get('/:id/usage', getApiKeyUsage);
 
 export default router;

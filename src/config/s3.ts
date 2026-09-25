@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
 let client: S3Client | null = null;
 
@@ -32,4 +32,23 @@ export const uploadBackupToS3 = async (key: string, body: Buffer, contentType: s
         })
     );
     return `s3://${bucket}/${key}`;
+};
+
+// Downloads a backup object back down as a string. Restore previously never
+// worked for S3-stored backups at all — it read fileUrl as if it were always
+// a local filesystem path (path.join(process.cwd(), 's3://bucket/key') is not
+// a real path), so a restore attempt just threw ENOENT for every backup that
+// was actually written to durable off-server storage.
+export const downloadBackupFromS3 = async (key: string): Promise<string> => {
+    const bucket = process.env.AWS_S3_BUCKET!;
+    const result = await getClient().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    return (await result.Body?.transformToString()) || '';
+};
+
+// Parses the "s3://bucket/key" URL this module itself produces back into a
+// bare object key for a subsequent GetObjectCommand.
+export const parseS3Key = (fileUrl: string): string => {
+    const withoutScheme = fileUrl.replace(/^s3:\/\//, '');
+    const slashIndex = withoutScheme.indexOf('/');
+    return slashIndex === -1 ? withoutScheme : withoutScheme.slice(slashIndex + 1);
 };

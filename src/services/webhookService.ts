@@ -2,6 +2,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import Webhook from '../models/Webhook.js';
 import WebhookLog from '../models/WebhookLog.js';
+import { addWebhookJob } from '../queues/webhookQueue.js';
 
 class WebhookService {
     /**
@@ -16,32 +17,43 @@ class WebhookService {
             const webhooks = await Webhook.find({
                 tenantId,
                 isActive: true,
-                events: event
+                events: event,
             });
 
             if (webhooks.length === 0) return;
 
-            // Dispatch to each webhook asynchronously
-            webhooks.forEach(async (webhook) => {
-                await this.dispatch(webhook, event, payload);
-            });
+            for (const webhook of webhooks) {
+                const queued = await addWebhookJob({
+                    webhookId: (webhook._id as any).toString(),
+                    event,
+                    payload,
+                });
+                if (!queued) {
+                    // No queue available (Redis disabled) — dispatch immediately,
+                    // same as before, just without automatic retry on failure.
+                    this.dispatch(webhook, event, payload, 1).catch(() => {
+                        // already logged to WebhookLog inside dispatch()
+                    });
+                }
+            }
         } catch (error) {
             console.error('Error triggering webhooks:', error);
         }
     }
 
     /**
-     * Dispatch a single webhook request
+     * Dispatch a single webhook request. Public so the BullMQ worker can call
+     * it directly per retry attempt — rethrows on failure so a failed HTTP
+     * delivery becomes a failed BullMQ job, which is what makes the queue's
+     * `attempts`/`backoff` config actually retry instead of silently giving up
+     * after one try (the old behavior, hardcoded to `attempt: 1`).
      */
-    private async dispatch(webhook: any, event: string, payload: any) {
+    async dispatch(webhook: any, event: string, payload: any, attempt: number) {
         const timestamp = Date.now().toString();
         const body = JSON.stringify(payload);
 
         // Generate HMAC signature
-        const signature = crypto
-            .createHmac('sha256', webhook.secret)
-            .update(`${timestamp}.${body}`)
-            .digest('hex');
+        const signature = crypto.createHmac('sha256', webhook.secret).update(`${timestamp}.${body}`).digest('hex');
 
         try {
             const response = await axios.post(webhook.url, body, {
@@ -50,9 +62,9 @@ class WebhookService {
                     'X-Webhook-Event': event,
                     'X-Webhook-Timestamp': timestamp,
                     'X-Webhook-Signature': signature,
-                    'User-Agent': 'Retail-SaaS-Webhook-Dispatcher'
+                    'User-Agent': 'Retail-SaaS-Webhook-Dispatcher',
                 },
-                timeout: 5000 // 5 second timeout
+                timeout: 5000, // 5 second timeout
             });
 
             // Log success
@@ -64,7 +76,7 @@ class WebhookService {
                 responseBody: typeof response.data === 'string' ? response.data : JSON.stringify(response.data),
                 status: 'success',
                 tenantId: webhook.tenantId,
-                attempt: 1
+                attempt,
             });
         } catch (error: any) {
             // Log failure
@@ -77,9 +89,10 @@ class WebhookService {
                 status: 'failed',
                 errorMessage: error.message,
                 tenantId: webhook.tenantId,
-                attempt: 1
+                attempt,
             });
-            console.error(`Webhook delivery failed to ${webhook.url}:`, error.message);
+            console.error(`Webhook delivery failed to ${webhook.url} (attempt ${attempt}):`, error.message);
+            throw error;
         }
     }
 }

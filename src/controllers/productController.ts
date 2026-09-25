@@ -192,6 +192,9 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
 // @desc    Update product
 // @route   PUT /api/products/:id
 export const updateProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const existing = await Product.findOne({ _id: req.params.id, storeId: req.tenantId }).select('price');
+    if (!existing) return res.status(404).json(new ApiResponse(404, null, 'Product not found'));
+
     const product = await Product.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, {
         returnDocument: 'after',
     }).populate('taxRule');
@@ -212,6 +215,24 @@ export const updateProduct = asyncHandler(async (req: TenantRequest, res: Respon
         ipAddress: req.ip,
         userAgent: req.headers['user-agent'],
     });
+
+    // A price change is significant enough (pricing mistakes, undercutting
+    // disputes) to warrant its own filterable entry with real before/after
+    // values, not just a generic "product updated" line.
+    if (typeof req.body.price === 'number' && existing.price !== product.price) {
+        await AuditLog.create({
+            userId: req.user?._id,
+            storeId: req.tenantId,
+            action: 'PRICE_CHANGE',
+            entity: 'Product',
+            entityId: product._id as any,
+            oldValue: existing.price,
+            newValue: product.price,
+            details: `Price for "${product.name}" changed from ${existing.price} to ${product.price}.`,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
+        });
+    }
 
     // Trigger Webhooks
     webhookService.trigger('product.updated', req.tenantId!.toString(), product);
@@ -302,6 +323,22 @@ export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response
     } finally {
         session.endSession();
     }
+
+    // Audit log — StockAdjustment (above) is the detailed ledger entry; this
+    // makes the same event show up in the unified audit trail too, which
+    // previously only recorded product/customer/supplier changes, not stock.
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'STOCK_ADJUSTMENT',
+        entity: 'Product',
+        entityId: req.params.id as any,
+        oldValue: (inv?.quantity || 0) - adjustQty,
+        newValue: inv?.quantity,
+        details: `Stock ${type === 'add' ? 'increased' : 'decreased'} by ${Math.abs(adjustQty)} (${adjustmentReason}).`,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+    });
 
     // Invalidate cache
     if (process.env.SKIP_REDIS !== 'true') {

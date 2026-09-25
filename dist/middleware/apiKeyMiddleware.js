@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import ApiKey from '../models/ApiKey.js';
+import ApiRequestLog from '../models/ApiRequestLog.js';
 export const requireApiKey = async (req, res, next) => {
     let rawKey = req.headers['x-api-key'];
     if (!rawKey && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
@@ -20,9 +21,26 @@ export const requireApiKey = async (req, res, next) => {
         // Attach tenant and permissions to request
         req.tenantId = apiKey.tenantId;
         req.permissions = apiKey.permissions;
-        // Update last used timestamp
-        apiKey.lastUsedAt = new Date();
-        await apiKey.save();
+        // Update last used timestamp + running total, and log this request for
+        // the usage-analytics view once the response actually finishes (the
+        // real status code isn't known until then). Both are fire-and-forget —
+        // a logging failure must never affect the actual API call.
+        //
+        // The counter update goes through $inc (an atomic DB-side increment),
+        // not a read-modify-write of the in-memory document — two requests on
+        // the same key arriving close together would otherwise both read the
+        // same starting count and each save() only +1 from it, silently
+        // losing an increment under any real concurrent traffic.
+        ApiKey.updateOne({ _id: apiKey._id }, { $set: { lastUsedAt: new Date() }, $inc: { usageCount: 1 } }).catch(() => { });
+        res.on('finish', () => {
+            ApiRequestLog.create({
+                apiKeyId: apiKey._id,
+                tenantId: apiKey.tenantId,
+                method: req.method,
+                path: req.path,
+                statusCode: res.statusCode,
+            }).catch(() => { });
+        });
         next();
     }
     catch (error) {

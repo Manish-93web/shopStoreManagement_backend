@@ -1,4 +1,5 @@
 import express, { Response } from 'express';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { requireApiKey, requirePermission, PublicApiRequest } from '../middleware/apiKeyMiddleware.js';
 import Product from '../models/Product.js';
 import Order from '../models/Order.js';
@@ -7,6 +8,22 @@ const router = express.Router();
 
 // Apply API Key Validation to all public routes
 router.use(requireApiKey);
+
+// This surface sits outside the /api/v1 prefix the app-wide limiter covers, so
+// it had no throttling of its own. Keyed by the validated API key (tenantId)
+// rather than IP — a legitimate integration server can make many calls from
+// one IP, while a leaked/abused key should still be capped regardless of
+// which IP it's used from.
+router.use(
+    rateLimit({
+        windowMs: 15 * 60 * 1000, // 15 minutes
+        max: 300,
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req: PublicApiRequest) => req.tenantId || ipKeyGenerator(req.ip!),
+        message: { success: false, message: 'Too many requests for this API key, please try again later' },
+    })
+);
 
 // Example Public Endpoint: Get Products
 router.get('/products', requirePermission('read:products'), async (req: PublicApiRequest, res: Response) => {
@@ -34,7 +51,7 @@ router.post('/orders', requirePermission('write:orders'), async (req: PublicApiR
             storeId: req.tenantId,
             items,
             grandTotal,
-            paymentDetails
+            paymentDetails,
         });
 
         res.status(201).json({ success: true, data: order });

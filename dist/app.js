@@ -8,7 +8,6 @@ import purchaseOrderRoutes from './routes/purchaseOrderRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import walletRoutes from './routes/walletRoutes.js';
 import storeRoutes from './routes/storeRoutes.js';
-import discountRoutes from './routes/discountRoutes.js';
 import transferRoutes from './routes/transferRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
@@ -22,10 +21,8 @@ import supplierContactRoutes from './routes/supplierContactRoutes.js';
 import brandRoutes from './routes/brandRoutes.js';
 import taxRuleRoutes from './routes/taxRuleRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
-import sessionRoutes from './routes/sessionRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import inventoryDetailRoutes from './routes/inventoryDetailRoutes.js';
-import hardwareRoutes from './routes/hardwareRoutes.js';
 import backupRoutes from './routes/backupRoutes.js';
 import searchRoutes from './routes/searchRoutes.js';
 import importRoutes from './routes/importRoutes.js';
@@ -42,6 +39,8 @@ import featureFlagRoutes from './routes/featureFlagRoutes.js';
 import themeRoutes from './routes/themeRoutes.js';
 import accountingRoutes from './routes/accountingRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
+import scheduledMessageRoutes from './routes/scheduledMessageRoutes.js';
+import auditLogRoutes from './routes/auditLogRoutes.js';
 import { stripeWebhook, razorpayWebhook } from './controllers/webhookController.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -134,6 +133,7 @@ v1.use('/categories', categoryRoutes);
 v1.use('/orders', orderRoutes);
 v1.use('/purchase-orders', purchaseOrderRoutes);
 v1.use('/customers', customerRoutes);
+v1.use('/scheduled-messages', scheduledMessageRoutes);
 v1.use('/wallets', walletRoutes);
 v1.use('/stores', storeRoutes);
 // Inventory & Supply
@@ -141,19 +141,24 @@ v1.use('/suppliers', supplierRoutes);
 v1.use('/supplier-payments', supplierPaymentRoutes);
 v1.use('/supplier-contacts', supplierContactRoutes);
 v1.use('/transfers', transferRoutes);
-// POS Enhancements
-v1.use('/discounts', discountRoutes);
 // HR
 v1.use('/employees', employeeRoutes);
 v1.use('/attendance', attendanceRoutes);
 v1.use('/shifts', shiftRoutes);
-// Returns & Sessions
+// Returns
 v1.use('/returns', returnRoutes);
 v1.use('/exchanges', exchangeRoutes);
-v1.use('/sessions', sessionRoutes);
+// '/sessions' (CashRegisterSession) is deprecated in favor of '/shifts' (Shift) —
+// both modeled the same cash-register-session concept independently, which is
+// exactly the split-brain a cashier could get stuck between (open a "session" in
+// one flow, have checkout gate on a "shift" in the other). The route is no longer
+// mounted; shiftController.getActiveShift transparently migrates any already-open
+// CashRegisterSession into a Shift the first time it's checked, so no in-progress
+// register session is stranded by this change. The model/controller/routes files
+// are kept (not deleted) since historical CashRegisterSession documents may still
+// exist for real stores and nothing should destroy that record.
 v1.use('/notifications', notificationRoutes);
 v1.use('/inventory-details', inventoryDetailRoutes);
-v1.use('/hardware', hardwareRoutes);
 v1.use('/backup', backupRoutes);
 v1.use('/search', searchRoutes);
 v1.use('/import', importRoutes);
@@ -175,6 +180,7 @@ v1.use('/tax-rules', taxRuleRoutes);
 v1.use('/settings', settingsRoutes);
 v1.use('/accounting', accountingRoutes);
 v1.use('/uploads', uploadRoutes);
+v1.use('/audit-logs', auditLogRoutes);
 app.use('/api/v1', v1);
 // Public API explicitly decoupled from auth middleware internally
 app.use('/api/public/v1', publicApiRoutes);

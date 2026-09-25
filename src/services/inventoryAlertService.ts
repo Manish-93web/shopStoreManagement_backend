@@ -2,6 +2,7 @@ import Inventory from '../models/Inventory.js';
 import InventoryBatch from '../models/InventoryBatch.js';
 import User from '../models/User.js';
 import { notificationService } from './notificationService.js';
+import webhookService from './webhookService.js';
 import dayjs from 'dayjs';
 
 export const inventoryAlertService = {
@@ -11,26 +12,42 @@ export const inventoryAlertService = {
     checkLowStock: async (storeId: string) => {
         const lowStockItems = await Inventory.find({
             store: storeId,
-            $expr: { $lte: ['$quantity', '$lowStockThreshold'] }
+            $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
         }).populate('product', 'name sku');
 
         if (lowStockItems.length === 0) return;
 
-        // Get store owners/managers to notify
-        const recipients = await User.find({ storeId, role: { $in: ['Owner', 'Manager'] }, isActive: true });
-        
+        // Get store owners/managers to notify — role values must match the real
+        // UserRole enum ('STORE_OWNER'/'MANAGER'); the previous 'Owner'/'Manager'
+        // strings never matched any user, so these alerts silently reached no one.
+        const recipients = await User.find({ storeId, role: { $in: ['STORE_OWNER', 'MANAGER'] }, isActive: true });
+
         for (const recipient of recipients) {
             for (const item of lowStockItems) {
                 const product: any = item.product;
                 await notificationService.send({
                     recipientId: (recipient._id as any).toString(),
                     storeId,
-                    title: "Low Stock Alert 🚨",
+                    title: 'Low Stock Alert 🚨',
                     message: `Product "${product.name}" (${product.sku}) is running low. Current stock: ${item.quantity}.`,
                     type: 'WARNING',
-                    actionUrl: '/inventory'
+                    actionUrl: '/inventory',
                 });
             }
+        }
+
+        // 'inventory.low' has been a selectable webhook event since this app's
+        // webhook system shipped, but nothing ever called trigger() for it —
+        // integrations subscribed to it silently never received anything.
+        for (const item of lowStockItems) {
+            const product: any = item.product;
+            webhookService.trigger('inventory.low', storeId, {
+                product: product?._id,
+                productName: product?.name,
+                sku: product?.sku,
+                quantity: item.quantity,
+                lowStockThreshold: item.lowStockThreshold,
+            });
         }
     },
 
@@ -42,12 +59,12 @@ export const inventoryAlertService = {
         const expiringBatches = await InventoryBatch.find({
             storeId,
             status: 'Active',
-            expiryDate: { $lte: thirtyDaysFromNow, $gt: new Date() }
+            expiryDate: { $lte: thirtyDaysFromNow, $gt: new Date() },
         }).populate('product', 'name sku');
 
         if (expiringBatches.length === 0) return;
 
-        const recipients = await User.find({ storeId, role: { $in: ['Owner', 'Manager'] }, isActive: true });
+        const recipients = await User.find({ storeId, role: { $in: ['STORE_OWNER', 'MANAGER'] }, isActive: true });
 
         for (const recipient of recipients) {
             for (const batch of expiringBatches) {
@@ -55,12 +72,12 @@ export const inventoryAlertService = {
                 await notificationService.send({
                     recipientId: (recipient._id as any).toString(),
                     storeId,
-                    title: "Batch Expiry Warning ⚠️",
+                    title: 'Batch Expiry Warning ⚠️',
                     message: `Batch ${batch.batchNumber} of "${product.name}" expires on ${dayjs(batch.expiryDate).format('MMM DD, YYYY')}.`,
                     type: 'ERROR',
-                    actionUrl: '/inventory'
+                    actionUrl: '/inventory',
                 });
             }
         }
-    }
+    },
 };

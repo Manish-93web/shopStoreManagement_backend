@@ -30,6 +30,8 @@ const OrderSchema = new Schema({
     discountTotal: { type: Number, default: 0 },
     discountReason: { type: String },
     grandTotal: { type: Number, required: true },
+    amountPaid: { type: Number, required: true },
+    amountDue: { type: Number, required: true, default: 0 },
     loyaltyPointsUsed: { type: Number, default: 0 },
     paymentDetails: [
         {

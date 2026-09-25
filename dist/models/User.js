@@ -11,7 +11,7 @@ export var UserRole;
 const UserSchema = new Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
-    phone: { type: String },
+    phone: { type: String, unique: true, sparse: true },
     password: { type: String },
     role: {
         type: String,
@@ -21,6 +21,7 @@ const UserSchema = new Schema({
     stores: [{ type: Schema.Types.ObjectId, ref: 'Store' }],
     storeId: { type: Schema.Types.ObjectId, ref: 'Store' },
     isActive: { type: Boolean, default: true },
+    restrictedPermissions: [{ type: String }],
     refreshToken: { type: String },
     notificationSettings: {
         inApp: { type: Boolean, default: true },

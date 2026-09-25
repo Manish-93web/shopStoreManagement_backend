@@ -14,12 +14,96 @@ import webhookService from '../services/webhookService.js';
 import Coupon from '../models/Coupon.js';
 import Loyalty from '../models/Loyalty.js';
 import redisClient, { bumpCacheVersion, getCacheVersion } from '../config/redis.js';
+import CustomerDue from '../models/CustomerDue.js';
+import InventoryBatch from '../models/InventoryBatch.js';
+import ProductSerial from '../models/ProductSerial.js';
+// Batch (FEFO — soonest-expiring first) and serial (FIFO, auto-assigned since
+// POS checkout has no per-unit serial picker) consumption for a sold item.
+// Best-effort and non-blocking: most products aren't under batch/serial
+// tracking at all, and Inventory.quantity (updated by the caller) remains the
+// authoritative stock count regardless of whether any batch/serial records
+// exist to reconcile against.
+async function consumeStockRecords(storeId, item, orderId) {
+    let remaining = item.quantity;
+    const batchQuery = { storeId, product: item.product, status: 'Active', currentQuantity: { $gt: 0 } };
+    if (item.variant)
+        batchQuery.variant = item.variant;
+    const batches = await InventoryBatch.find(batchQuery).sort({ expiryDate: 1 });
+    for (const batch of batches) {
+        if (remaining <= 0)
+            break;
+        const deduct = Math.min(batch.currentQuantity, remaining);
+        batch.currentQuantity -= deduct;
+        remaining -= deduct;
+        await batch.save();
+    }
+    const serialQuery = { storeId, product: item.product, status: 'In Stock' };
+    if (item.variant)
+        serialQuery.variant = item.variant;
+    const serials = await ProductSerial.find(serialQuery).sort({ createdAt: 1 }).limit(item.quantity);
+    for (const serial of serials) {
+        serial.status = 'Sold';
+        serial.currentOrder = orderId;
+        serial.history.push({ action: 'Sold', date: new Date(), referenceId: orderId });
+        await serial.save();
+    }
+}
+// Reverse of consumeStockRecords, for order cancellation — without this, a
+// cancelled order would credit Inventory.quantity back but leave batches
+// permanently under-counted and serials permanently stuck "Sold".
+async function restoreStockRecords(storeId, item, orderId) {
+    let remaining = item.quantity;
+    const batchQuery = { storeId, product: item.product, status: 'Active' };
+    if (item.variant)
+        batchQuery.variant = item.variant;
+    // Best-effort — this doesn't know exactly which batch(es) the original sale
+    // drew from, only that some were drawn from in soonest-expiry-first order,
+    // so it credits back in the reverse (latest-expiry-first) order among
+    // batches with room.
+    const batches = await InventoryBatch.find(batchQuery).sort({ expiryDate: -1 });
+    for (const batch of batches) {
+        if (remaining <= 0)
+            break;
+        const room = batch.initialQuantity - batch.currentQuantity;
+        if (room <= 0)
+            continue;
+        const credit = Math.min(room, remaining);
+        batch.currentQuantity += credit;
+        remaining -= credit;
+        await batch.save();
+    }
+    // Serials are precise, unlike batches — this order's id was stamped on
+    // exactly the units it sold, so the reversal is exact, not a heuristic.
+    const serialQuery = { storeId, product: item.product, status: 'Sold', currentOrder: orderId };
+    if (item.variant)
+        serialQuery.variant = item.variant;
+    const serials = await ProductSerial.find(serialQuery);
+    for (const serial of serials) {
+        serial.status = 'In Stock';
+        serial.currentOrder = undefined;
+        serial.history.push({ action: 'Returned to stock (order cancelled)', date: new Date(), referenceId: orderId });
+        await serial.save();
+    }
+}
 // @desc    Create a new POS order
 // @route   POST /api/orders
 // @access  Private (Cashier/Manager/Owner)
 export const createOrder = asyncHandler(async (req, res) => {
     const { customerId, items, subTotal, taxTotal, discountTotal, discountReason, grandTotal, paymentDetails, loyaltyPointsUsed, couponCode, isGstBill = true, } = req.body;
     const orderNumber = `ORD-${Date.now()}`;
+    // Payment status/amounts are computed server-side from what was actually
+    // collected, never trusted from the client — a sale that falls short of the
+    // total is a partial/unpaid credit sale, which can only be recorded against
+    // a real customer (walk-ins must pay in full).
+    const totalCollected = paymentDetails.reduce((acc, p) => acc + p.amount, 0);
+    const amountDue = Math.max(Math.round((grandTotal - totalCollected) * 100) / 100, 0);
+    const amountPaid = grandTotal - amountDue;
+    if (amountDue > 0.01 && !customerId) {
+        return res
+            .status(400)
+            .json(new ApiResponse(400, null, 'Select a customer to record a partial or unpaid sale.'));
+    }
+    const paymentStatus = amountDue <= 0.01 ? 'Paid' : amountPaid <= 0.01 ? 'Unpaid' : 'Partial';
     // 0. Increment Coupon usage if applicable
     if (couponCode) {
         await Coupon.findOneAndUpdate({ code: couponCode.toUpperCase(), storeId: req.tenantId }, { $inc: { usageCount: 1 } });
@@ -75,10 +159,12 @@ export const createOrder = asyncHandler(async (req, res) => {
         discountTotal,
         discountReason,
         grandTotal,
+        amountPaid,
+        amountDue,
         paymentDetails,
         loyaltyPointsUsed,
         cashier: req.user._id,
-        paymentStatus: paymentDetails.reduce((acc, p) => acc + p.amount, 0) >= grandTotal ? 'Paid' : 'Partial',
+        paymentStatus,
     });
     // Write accurate PaymentTransactions for Audit Tracing
     const paymentOps = paymentDetails.map((paymentRaw) => ({
@@ -94,6 +180,23 @@ export const createOrder = asyncHandler(async (req, res) => {
         notes: `Payment for Order ${orderNumber}`,
     }));
     await PaymentTransaction.insertMany(paymentOps);
+    // 1b. Record the shortfall against the customer's dues ledger (customerId is
+    // guaranteed present here — enforced by the amountDue/customerId check above).
+    if (amountDue > 0.01) {
+        await CustomerDue.findOneAndUpdate({ customer: customerId, storeId: req.tenantId }, {
+            $inc: { balance: amountDue },
+            $push: {
+                transactions: {
+                    type: 'CHARGE',
+                    amount: amountDue,
+                    reason: `Order ${orderNumber}`,
+                    orderId: order._id,
+                    date: new Date(),
+                },
+            },
+        }, { upsert: true });
+        await Customer.findByIdAndUpdate(customerId, { $inc: { dueBalance: amountDue } });
+    }
     // 2. Handle Customer Loyalty
     if (customerId) {
         let loyalty = await Loyalty.findOne({ customer: customerId, storeId: req.tenantId });
@@ -167,6 +270,12 @@ export const createOrder = asyncHandler(async (req, res) => {
             invQuery.variant = { $exists: false }; // Base product stock if no variant
         }
         const inv = await Inventory.findOneAndUpdate(invQuery, { $inc: { quantity: -item.quantity } }, { returnDocument: 'after' });
+        try {
+            await consumeStockRecords(req.tenantId.toString(), item, order._id);
+        }
+        catch (err) {
+            console.error(`Batch/serial consumption failed for product ${item.product}:`, err);
+        }
         // Notify clients about stock change
         emitToStore(req.tenantId.toString(), 'inventory-update', {
             productId: item.product,
@@ -190,10 +299,11 @@ export const getOrders = asyncHandler(async (req, res) => {
     const search = req.query.search?.trim();
     const status = req.query.status?.trim();
     const paymentMethod = req.query.paymentMethod?.trim();
+    const paymentStatus = req.query.paymentStatus?.trim();
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
     const ordersCacheVersion = await getCacheVersion(req.tenantId.toString(), 'orders');
-    const cacheKey = `orders:${req.tenantId}:v${ordersCacheVersion}:p${page}:l${limit}:s${search || ''}:st${status || ''}:pm${paymentMethod || ''}:d${startDate || ''}-${endDate || ''}`;
+    const cacheKey = `orders:${req.tenantId}:v${ordersCacheVersion}:p${page}:l${limit}:s${search || ''}:st${status || ''}:pm${paymentMethod || ''}:ps${paymentStatus || ''}:d${startDate || ''}-${endDate || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached)
@@ -216,12 +326,15 @@ export const getOrders = asyncHandler(async (req, res) => {
         query.status = status;
     if (paymentMethod)
         query['paymentDetails.method'] = paymentMethod;
+    if (paymentStatus)
+        query.paymentStatus = paymentStatus;
     if (startDate && endDate) {
         query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
     const orders = await Order.find(query)
         .populate('customer')
         .populate('cashier', 'name')
+        .populate('items.product', 'name images')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -282,6 +395,12 @@ export const cancelOrder = asyncHandler(async (req, res) => {
                 invQuery.variant = { $exists: false };
             }
             await Inventory.findOneAndUpdate(invQuery, { $inc: { quantity: item.quantity } }, { session, upsert: true });
+            try {
+                await restoreStockRecords(req.tenantId.toString(), item, order._id);
+            }
+            catch (err) {
+                console.error(`Batch/serial restoration failed for product ${item.product}:`, err);
+            }
         }
         const walletPayment = order.paymentDetails.find((p) => p.method === 'Wallet');
         if (walletPayment && order.customer) {
@@ -297,6 +416,28 @@ export const cancelOrder = asyncHandler(async (req, res) => {
                 },
             }, { session, upsert: true });
             await Customer.findByIdAndUpdate(order.customer, { $inc: { walletBalance: walletPayment.amount } }, { session });
+        }
+        if (order.amountDue > 0.01 && order.customer) {
+            // The ledger is a running balance, not per-order-allocated (same
+            // simplification as the Wallet ledger) — if the customer already paid
+            // down some of this due before cancelling, reverse only what's still
+            // actually outstanding, never driving the balance negative.
+            const dueCustomer = await Customer.findById(order.customer).session(session);
+            const reversalAmount = Math.min(order.amountDue, dueCustomer?.dueBalance || 0);
+            if (reversalAmount > 0.01) {
+                await CustomerDue.findOneAndUpdate({ customer: order.customer, storeId: req.tenantId }, {
+                    $inc: { balance: -reversalAmount },
+                    $push: {
+                        transactions: {
+                            type: 'ADJUSTMENT',
+                            amount: reversalAmount,
+                            reason: `Order ${order.orderNumber} cancelled`,
+                            date: new Date(),
+                        },
+                    },
+                }, { session });
+                await Customer.findByIdAndUpdate(order.customer, { $inc: { dueBalance: -reversalAmount } }, { session });
+            }
         }
         if (order.loyaltyPointsUsed && order.customer) {
             await Loyalty.findOneAndUpdate({ customer: order.customer, storeId: req.tenantId }, { $inc: { points: order.loyaltyPointsUsed, totalRedeemed: -order.loyaltyPointsUsed } }, { session, upsert: true });
@@ -335,4 +476,29 @@ export const cancelOrder = asyncHandler(async (req, res) => {
         });
     }
     res.status(200).json(new ApiResponse(200, order, 'Order cancelled'));
+});
+// @desc    Log that a WhatsApp template message was sent to a customer for this
+//          order — this app has no WhatsApp Business Content Template support, so
+//          the actual send happens client-side via a wa.me deep link the shop
+//          owner sends themselves; this just records that it happened, attributed
+//          to the customer so it surfaces on their existing Activity Log tab.
+// @route   POST /api/orders/:id/whatsapp-log
+// @access  Private (Cashier/Manager/Owner)
+export const logWhatsAppSent = asyncHandler(async (req, res) => {
+    const { template } = req.body;
+    const order = await Order.findOne({ _id: req.params.id, storeId: req.tenantId });
+    if (!order) {
+        return res.status(404).json(new ApiResponse(404, null, 'Order not found'));
+    }
+    if (order.customer) {
+        await AuditLog.create({
+            userId: req.user?._id,
+            storeId: req.tenantId,
+            action: 'WHATSAPP_SENT',
+            entity: 'Customer',
+            entityId: order.customer,
+            details: `Sent "${template || 'WhatsApp'}" message for order ${order.orderNumber}`,
+        });
+    }
+    res.status(200).json(new ApiResponse(200, null, 'Logged'));
 });

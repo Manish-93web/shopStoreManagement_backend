@@ -5,7 +5,7 @@ export const promotionService = {
     /**
      * Validate and Apply Coupon
      */
-    validateCoupon: async (code, cartTotal, customerId, storeId) => {
+    validateCoupon: async (code, cartTotal, cartItems, customerId, storeId) => {
         const coupon = await Coupon.findOne({
             code: code.toUpperCase(),
             storeId,
@@ -38,6 +38,25 @@ export const promotionService = {
             if (coupon.maxDiscountAmount && discountAmount > coupon.maxDiscountAmount) {
                 discountAmount = coupon.maxDiscountAmount;
             }
+        }
+        else if (coupon.discountType === 'BOGO') {
+            // "Buy X, get Y free" — free units come off the cheapest eligible
+            // units in the cart (the conservative, standard retail convention),
+            // not an arbitrary item, so the discount is deterministic regardless
+            // of cart order.
+            const buyQty = coupon.buyQuantity || 1;
+            const getQty = coupon.getQuantity || 1;
+            const unitPrices = [];
+            for (const item of cartItems || []) {
+                for (let n = 0; n < (item.quantity || 0); n++)
+                    unitPrices.push(item.price || 0);
+            }
+            unitPrices.sort((a, b) => a - b);
+            const freeUnitCount = Math.floor(unitPrices.length / (buyQty + getQty)) * getQty;
+            if (freeUnitCount <= 0) {
+                throw new Error(`Add at least ${buyQty + getQty} item(s) to the cart to use this BOGO offer`);
+            }
+            discountAmount = unitPrices.slice(0, freeUnitCount).reduce((sum, p) => sum + p, 0);
         }
         else {
             discountAmount = coupon.discountValue;

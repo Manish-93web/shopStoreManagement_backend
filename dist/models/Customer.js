@@ -8,6 +8,7 @@ const CustomerSchema = new Schema({
     gstin: { type: String },
     loyaltyPoints: { type: Number, default: 0 },
     walletBalance: { type: Number, default: 0 },
+    dueBalance: { type: Number, default: 0 },
     segment: { type: String, enum: ['Retail', 'Wholesale', 'VIP'], default: 'Retail' },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
     notes: { type: String, default: '' },

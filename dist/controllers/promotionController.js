@@ -6,10 +6,10 @@ import PromotionRule from '../models/PromotionRule.js';
 export const promotionController = {
     // @desc    Validate coupon for POS
     validate: asyncHandler(async (req, res) => {
-        const { code, cartTotal, customerId } = req.body;
+        const { code, cartTotal, cartItems, customerId } = req.body;
         try {
-            const result = await promotionService.validateCoupon(code, cartTotal, customerId, req.tenantId);
-            res.status(200).json(new ApiResponse(200, result, "Coupon valid"));
+            const result = await promotionService.validateCoupon(code, cartTotal, cartItems || [], customerId, req.tenantId);
+            res.status(200).json(new ApiResponse(200, result, 'Coupon valid'));
         }
         catch (error) {
             res.status(400).json(new ApiResponse(400, null, error.message));
@@ -45,7 +45,7 @@ export const promotionController = {
     }),
     createCoupon: asyncHandler(async (req, res) => {
         const coupon = await Coupon.create({ ...req.body, storeId: req.tenantId });
-        res.status(201).json(new ApiResponse(201, coupon, "Coupon created"));
+        res.status(201).json(new ApiResponse(201, coupon, 'Coupon created'));
     }),
     // CRUD for Rules
     getRules: asyncHandler(async (req, res) => {
@@ -66,6 +66,6 @@ export const promotionController = {
     }),
     createRule: asyncHandler(async (req, res) => {
         const rule = await PromotionRule.create({ ...req.body, storeId: req.tenantId });
-        res.status(201).json(new ApiResponse(201, rule, "Rule created"));
-    })
+        res.status(201).json(new ApiResponse(201, rule, 'Rule created'));
+    }),
 };

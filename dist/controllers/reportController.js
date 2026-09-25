@@ -4,6 +4,7 @@ import Customer from '../models/Customer.js';
 import AuditLog from '../models/AuditLog.js';
 import StockAdjustment from '../models/StockAdjustment.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
+import Shift from '../models/Shift.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { addReportJob } from '../queues/reportQueue.js';
@@ -262,6 +263,52 @@ export const getTaxComplianceReport = asyncHandler(async (req, res) => {
     }, { totalTaxCollected: 0, grossSales: 0, netSales: 0, orderCount: orders.length });
     res.status(200).json(new ApiResponse(200, complianceSummary));
 });
+// @desc    Get cash & payment-method reconciliation report across shifts
+// @route   GET /api/reports/cash-reconciliation
+export const getCashReconciliationReport = asyncHandler(async (req, res) => {
+    const { startDate, endDate } = req.query;
+    const query = { storeId: req.tenantId, status: 'Closed' };
+    if (startDate && endDate) {
+        query.endTime = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+    const shifts = await Shift.find(query).populate('userId', 'name email').sort({ endTime: -1 });
+    const totals = shifts.reduce((acc, s) => {
+        acc.totalCashSales += s.totalCashSales || 0;
+        acc.totalCardSales += s.totalCardSales || 0;
+        acc.totalUpiSales += s.totalUpiSales || 0;
+        acc.totalWalletSales += s.totalWalletSales || 0;
+        acc.totalRefunds += s.totalRefunds || 0;
+        acc.totalDiscrepancy += s.discrepancy || 0;
+        acc.shiftsWithMismatch += Math.abs(s.discrepancy || 0) > 0.01 ? 1 : 0;
+        return acc;
+    }, {
+        totalCashSales: 0,
+        totalCardSales: 0,
+        totalUpiSales: 0,
+        totalWalletSales: 0,
+        totalRefunds: 0,
+        totalDiscrepancy: 0,
+        shiftsWithMismatch: 0,
+    });
+    res.status(200).json(new ApiResponse(200, {
+        summary: { ...totals, shiftCount: shifts.length },
+        shifts: shifts.map((s) => ({
+            _id: s._id,
+            cashier: s.userId?.name || 'Unknown',
+            startTime: s.startTime,
+            endTime: s.endTime,
+            startingCash: s.startingCash,
+            expectedCash: s.expectedCash,
+            actualCash: s.actualCash,
+            discrepancy: s.discrepancy,
+            totalCashSales: s.totalCashSales,
+            totalCardSales: s.totalCardSales,
+            totalUpiSales: s.totalUpiSales,
+            totalWalletSales: s.totalWalletSales,
+            totalRefunds: s.totalRefunds,
+        })),
+    }));
+});
 // @desc    Get sales audit trail
 // @route   GET /api/reports/audit/sales
 export const getSalesAuditTrail = asyncHandler(async (req, res) => {
@@ -395,6 +442,26 @@ export const exportReport = asyncHandler(async (req, res) => {
             const pos = await PurchaseOrder.find(poQuery).populate('supplier', 'name');
             pos.forEach((po) => {
                 doc.fontSize(10).text(`PO: ${po.poNumber} | Supplier: ${po.supplier?.name || 'Unknown'} | Total: ${po.grandTotal.toFixed(2)} | Status: ${po.status} | Date: ${new Date(po.createdAt).toLocaleDateString()}`);
+                doc.moveDown(0.5);
+            });
+        }
+        else if (type === 'customer-dues') {
+            const customers = await Customer.find({ storeId: req.tenantId, dueBalance: { $gt: 0 } }).sort({
+                dueBalance: -1,
+            });
+            customers.forEach((c) => {
+                doc.fontSize(10).text(`${c.name} | Phone: ${c.phone} | Segment: ${c.segment} | Outstanding: ${c.dueBalance.toFixed(2)} | Updated: ${new Date(c.updatedAt).toLocaleDateString()}`);
+                doc.moveDown(0.5);
+            });
+        }
+        else if (type === 'cash-reconciliation') {
+            const shiftQuery = { storeId: req.tenantId, status: 'Closed' };
+            if (startDate && endDate) {
+                shiftQuery.endTime = { $gte: new Date(startDate), $lte: new Date(endDate) };
+            }
+            const shifts = await Shift.find(shiftQuery).populate('userId', 'name').sort({ endTime: -1 });
+            shifts.forEach((s) => {
+                doc.fontSize(10).text(`Cashier: ${s.userId?.name || 'Unknown'} | Closed: ${s.endTime ? new Date(s.endTime).toLocaleString() : '-'} | Expected Cash: ${(s.expectedCash || 0).toFixed(2)} | Actual Cash: ${(s.actualCash || 0).toFixed(2)} | Discrepancy: ${(s.discrepancy || 0).toFixed(2)}`);
                 doc.moveDown(0.5);
             });
         }
@@ -539,6 +606,58 @@ export const exportReport = asyncHandler(async (req, res) => {
             grandTotal: po.grandTotal,
             status: po.status,
             createdAt: po.createdAt.toISOString(),
+        }));
+    }
+    else if (type === 'customer-dues') {
+        const customers = await Customer.find({ storeId: req.tenantId, dueBalance: { $gt: 0 } }).sort({
+            dueBalance: -1,
+        });
+        worksheet.columns = [
+            { header: 'Name', key: 'name', width: 25 },
+            { header: 'Phone', key: 'phone', width: 20 },
+            { header: 'Segment', key: 'segment', width: 15 },
+            { header: 'Outstanding Due', key: 'dueBalance', width: 18 },
+            { header: 'Last Updated', key: 'updatedAt', width: 25 },
+        ];
+        customers.forEach((c) => worksheet.addRow({
+            name: c.name,
+            phone: c.phone,
+            segment: c.segment,
+            dueBalance: c.dueBalance,
+            updatedAt: c.updatedAt.toISOString(),
+        }));
+    }
+    else if (type === 'cash-reconciliation') {
+        const shiftQuery = { storeId: req.tenantId, status: 'Closed' };
+        if (startDate && endDate) {
+            shiftQuery.endTime = { $gte: new Date(startDate), $lte: new Date(endDate) };
+        }
+        const shifts = await Shift.find(shiftQuery).populate('userId', 'name').sort({ endTime: -1 });
+        worksheet.columns = [
+            { header: 'Cashier', key: 'cashier', width: 20 },
+            { header: 'Closed At', key: 'endTime', width: 25 },
+            { header: 'Starting Cash', key: 'startingCash', width: 15 },
+            { header: 'Cash Sales', key: 'totalCashSales', width: 15 },
+            { header: 'Card Sales', key: 'totalCardSales', width: 15 },
+            { header: 'UPI Sales', key: 'totalUpiSales', width: 15 },
+            { header: 'Wallet Sales', key: 'totalWalletSales', width: 15 },
+            { header: 'Refunds', key: 'totalRefunds', width: 15 },
+            { header: 'Expected Cash', key: 'expectedCash', width: 15 },
+            { header: 'Actual Cash', key: 'actualCash', width: 15 },
+            { header: 'Discrepancy', key: 'discrepancy', width: 15 },
+        ];
+        shifts.forEach((s) => worksheet.addRow({
+            cashier: s.userId?.name || 'Unknown',
+            endTime: s.endTime ? s.endTime.toISOString() : '',
+            startingCash: s.startingCash,
+            totalCashSales: s.totalCashSales,
+            totalCardSales: s.totalCardSales,
+            totalUpiSales: s.totalUpiSales,
+            totalWalletSales: s.totalWalletSales,
+            totalRefunds: s.totalRefunds,
+            expectedCash: s.expectedCash,
+            actualCash: s.actualCash,
+            discrepancy: s.discrepancy,
         }));
     }
     if (format === 'csv') {

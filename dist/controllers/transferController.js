@@ -94,11 +94,7 @@ export const getTransfers = asyncHandler(async (req, res) => {
         query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
     const [transfers, total] = await Promise.all([
-        Transfer.find(query)
-            .populate('fromStore toStore', 'name')
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit),
+        Transfer.find(query).populate('fromStore toStore', 'name').sort({ createdAt: -1 }).skip(skip).limit(limit),
         Transfer.countDocuments(query),
     ]);
     res.status(200).json(new ApiResponse(200, {

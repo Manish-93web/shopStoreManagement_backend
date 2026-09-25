@@ -43,7 +43,7 @@ export const notificationController = {
     markAsRead: async (req, res) => {
         try {
             await Notification.updateMany({ recipient: req.user?._id, isRead: false }, { $set: { isRead: true } });
-            res.json({ success: true, message: "All notifications marked as read" });
+            res.json({ success: true, message: 'All notifications marked as read' });
         }
         catch (error) {
             res.status(500).json({ success: false, message: error.message });
@@ -63,10 +63,10 @@ export const notificationController = {
             const { inApp, email, sms, whatsapp } = req.body;
             await User.findByIdAndUpdate(req.user?._id, {
                 $set: {
-                    notificationSettings: { inApp, email, sms, whatsapp }
-                }
+                    notificationSettings: { inApp, email, sms, whatsapp },
+                },
             });
-            res.json({ success: true, message: "Notification settings updated" });
+            res.json({ success: true, message: 'Notification settings updated' });
         }
         catch (error) {
             res.status(500).json({ success: false, message: error.message });
@@ -82,12 +82,12 @@ export const notificationController = {
                 title,
                 message,
                 type,
-                actionUrl
+                actionUrl,
             });
-            res.json({ success: true, message: "Notification queued" });
+            res.json({ success: true, message: 'Notification queued' });
         }
         catch (error) {
             res.status(500).json({ success: false, message: error.message });
         }
-    }
+    },
 };

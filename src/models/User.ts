@@ -6,7 +6,7 @@ export enum UserRole {
     STORE_OWNER = 'STORE_OWNER',
     MANAGER = 'MANAGER',
     CASHIER = 'CASHIER',
-    INVENTORY_STAFF = 'INVENTORY_STAFF'
+    INVENTORY_STAFF = 'INVENTORY_STAFF',
 }
 
 export interface IUser extends Document {
@@ -18,6 +18,12 @@ export interface IUser extends Document {
     stores: mongoose.Types.ObjectId[]; // For STORE_OWNER
     storeId?: mongoose.Types.ObjectId; // For staff members
     isActive: boolean;
+    // Explicit deny-list, not an allow-list — empty by default so adding this
+    // feature never silently takes away access an existing Cashier/Inventory
+    // Staff member already had. Only STORE_OWNER can grant/revoke these, and
+    // only CASHIER/INVENTORY_STAFF are ever subject to them (MANAGER keeps the
+    // same full trust it already has everywhere else in the app).
+    restrictedPermissions?: string[];
     refreshToken?: string;
     notificationSettings?: {
         inApp: boolean;
@@ -28,27 +34,31 @@ export interface IUser extends Document {
     comparePassword(password: string): Promise<boolean>;
 }
 
-const UserSchema: Schema = new Schema({
-    name: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    phone: { type: String },
-    password: { type: String },
-    role: {
-        type: String,
-        enum: Object.values(UserRole),
-        default: UserRole.STORE_OWNER
+const UserSchema: Schema = new Schema(
+    {
+        name: { type: String, required: true },
+        email: { type: String, required: true, unique: true },
+        phone: { type: String, unique: true, sparse: true },
+        password: { type: String },
+        role: {
+            type: String,
+            enum: Object.values(UserRole),
+            default: UserRole.STORE_OWNER,
+        },
+        stores: [{ type: Schema.Types.ObjectId, ref: 'Store' }],
+        storeId: { type: Schema.Types.ObjectId, ref: 'Store' },
+        isActive: { type: Boolean, default: true },
+        restrictedPermissions: [{ type: String }],
+        refreshToken: { type: String },
+        notificationSettings: {
+            inApp: { type: Boolean, default: true },
+            email: { type: Boolean, default: true },
+            sms: { type: Boolean, default: false },
+            whatsapp: { type: Boolean, default: false },
+        },
     },
-    stores: [{ type: Schema.Types.ObjectId, ref: 'Store' }],
-    storeId: { type: Schema.Types.ObjectId, ref: 'Store' },
-    isActive: { type: Boolean, default: true },
-    refreshToken: { type: String },
-    notificationSettings: {
-        inApp: { type: Boolean, default: true },
-        email: { type: Boolean, default: true },
-        sms: { type: Boolean, default: false },
-        whatsapp: { type: Boolean, default: false },
-    },
-}, { timestamps: true });
+    { timestamps: true }
+);
 
 UserSchema.pre<IUser>('save', async function () {
     if (!this.isModified('password')) return;
@@ -58,7 +68,6 @@ UserSchema.pre<IUser>('save', async function () {
 UserSchema.methods.comparePassword = async function (password: string): Promise<boolean> {
     return await bcrypt.compare(password, this.password!);
 };
-
 
 UserSchema.index({ storeId: 1 });
 

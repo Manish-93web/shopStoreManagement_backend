@@ -10,8 +10,12 @@ export const getGeneralLedger = asyncHandler(async (req, res) => {
     const query = { storeId: req.tenantId };
     if (startDate && endDate) {
         query.createdAt = {
-            $gte: dayjs(startDate).startOf('day').toDate(),
-            $lte: dayjs(endDate).endOf('day').toDate()
+            $gte: dayjs(startDate)
+                .startOf('day')
+                .toDate(),
+            $lte: dayjs(endDate)
+                .endOf('day')
+                .toDate(),
         };
     }
     if (transactionType && transactionType !== 'All') {
@@ -39,7 +43,7 @@ export const getGeneralLedger = asyncHandler(async (req, res) => {
     res.status(200).json(new ApiResponse(200, {
         transactions,
         summary,
-        netBalance: summary.totalInflow - summary.totalOutflow
+        netBalance: summary.totalInflow - summary.totalOutflow,
     }));
 });
 // @desc    Export Accounting CSV (Tally/ERP Compatible)
@@ -55,10 +59,10 @@ export const exportAccountingData = asyncHandler(async (req, res) => {
         { header: 'Voucher Type', key: 'voucherType', width: 15 },
         { header: 'Credit (Inflow)', key: 'credit', width: 15 },
         { header: 'Debit (Outflow)', key: 'debit', width: 15 },
-        { header: 'Balance', key: 'balance', width: 15 }
+        { header: 'Balance', key: 'balance', width: 15 },
     ];
     let runningBalance = 0;
-    transactions.forEach(tx => {
+    transactions.forEach((tx) => {
         const isCredit = tx.type === 'Inflow';
         const amount = tx.amount;
         runningBalance += isCredit ? amount : -amount;
@@ -69,7 +73,7 @@ export const exportAccountingData = asyncHandler(async (req, res) => {
             voucherType: tx.category,
             credit: isCredit ? amount : 0,
             debit: !isCredit ? amount : 0,
-            balance: runningBalance
+            balance: runningBalance,
         });
     });
     res.setHeader('Content-Type', 'text/csv');

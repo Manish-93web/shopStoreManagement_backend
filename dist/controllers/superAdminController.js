@@ -165,9 +165,13 @@ export const getSystemAuditLogs = asyncHandler(async (req, res) => {
     if (startDate || endDate) {
         query.createdAt = {};
         if (startDate)
-            query.createdAt.$gte = dayjs(startDate).startOf('day').toDate();
+            query.createdAt.$gte = dayjs(startDate)
+                .startOf('day')
+                .toDate();
         if (endDate)
-            query.createdAt.$lte = dayjs(endDate).endOf('day').toDate();
+            query.createdAt.$lte = dayjs(endDate)
+                .endOf('day')
+                .toDate();
     }
     // Free-text search matches the populated store name or user name. AuditLog has no
     // direct text field for either, so resolve matching store/user ids first (two-step
@@ -183,7 +187,15 @@ export const getSystemAuditLogs = asyncHandler(async (req, res) => {
         if (storeIds.length === 0 && userIds.length === 0) {
             // No store/user matches this term — short-circuit to an empty page rather
             // than falling through to an unfiltered query.
-            return res.status(200).json(new ApiResponse(200, { logs: [], totalPages: 0, currentPage: Number(page), distinctActions: [], distinctEntities: [] }));
+            return res
+                .status(200)
+                .json(new ApiResponse(200, {
+                logs: [],
+                totalPages: 0,
+                currentPage: Number(page),
+                distinctActions: [],
+                distinctEntities: [],
+            }));
         }
         query.$or = [
             ...(storeIds.length ? [{ storeId: { $in: storeIds } }] : []),

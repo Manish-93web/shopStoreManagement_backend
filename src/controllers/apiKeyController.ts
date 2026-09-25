@@ -1,6 +1,8 @@
 import { Response } from 'express';
 import crypto from 'crypto';
+import dayjs from 'dayjs';
 import ApiKey from '../models/ApiKey.js';
+import ApiRequestLog from '../models/ApiRequestLog.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
@@ -30,14 +32,20 @@ export const createApiKey = asyncHandler(async (req: TenantRequest, res: Respons
         prefix,
         permissions: permissions || ['read:all'],
         tenantId: req.tenantId,
-        isActive: true
+        isActive: true,
     });
 
     // We only return the rawKey this ONE time
-    res.status(201).json(new ApiResponse(201, {
-        apiKey,
-        rawKey // Frontend must display this to the user immediately
-    }, "API Key generated successfully"));
+    res.status(201).json(
+        new ApiResponse(
+            201,
+            {
+                apiKey,
+                rawKey, // Frontend must display this to the user immediately
+            },
+            'API Key generated successfully'
+        )
+    );
 });
 
 // @desc    Update API key (e.g., deactivate)
@@ -52,16 +60,52 @@ export const updateApiKey = asyncHandler(async (req: TenantRequest, res: Respons
         { returnDocument: 'after' }
     );
 
-    if (!apiKey) return res.status(404).json(new ApiResponse(404, null, "API Key not found"));
+    if (!apiKey) return res.status(404).json(new ApiResponse(404, null, 'API Key not found'));
 
-    res.status(200).json(new ApiResponse(200, apiKey, "API Key updated successfully"));
+    res.status(200).json(new ApiResponse(200, apiKey, 'API Key updated successfully'));
 });
 
 // @desc    Delete API key
 // @route   DELETE /api/api-keys/:id
 export const deleteApiKey = asyncHandler(async (req: TenantRequest, res: Response) => {
     const apiKey = await ApiKey.findOneAndDelete({ _id: req.params.id, tenantId: req.tenantId });
-    if (!apiKey) return res.status(404).json(new ApiResponse(404, null, "API Key not found"));
+    if (!apiKey) return res.status(404).json(new ApiResponse(404, null, 'API Key not found'));
 
-    res.status(200).json(new ApiResponse(200, null, "API Key deleted successfully"));
+    await ApiRequestLog.deleteMany({ apiKeyId: apiKey._id });
+
+    res.status(200).json(new ApiResponse(200, null, 'API Key deleted successfully'));
+});
+
+// @desc    Usage analytics for one API key — daily request counts over the
+//          last 14 days plus the most recent calls, previously there was no
+//          way to see request volume at all, only a single lastUsedAt timestamp.
+// @route   GET /api/api-keys/:id/usage
+export const getApiKeyUsage = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const apiKey = await ApiKey.findOne({ _id: req.params.id, tenantId: req.tenantId });
+    if (!apiKey) return res.status(404).json(new ApiResponse(404, null, 'API Key not found'));
+
+    const since = dayjs().subtract(14, 'days').startOf('day').toDate();
+
+    const [dailyCounts, recent] = await Promise.all([
+        ApiRequestLog.aggregate([
+            { $match: { apiKeyId: apiKey._id, createdAt: { $gte: since } } },
+            {
+                $group: {
+                    _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                    count: { $sum: 1 },
+                },
+            },
+            { $sort: { _id: 1 } },
+        ]),
+        ApiRequestLog.find({ apiKeyId: apiKey._id }).sort({ createdAt: -1 }).limit(20),
+    ]);
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            totalRequests: apiKey.usageCount || 0,
+            lastUsedAt: apiKey.lastUsedAt,
+            dailyCounts: dailyCounts.map((d) => ({ date: d._id, count: d.count })),
+            recent,
+        })
+    );
 });

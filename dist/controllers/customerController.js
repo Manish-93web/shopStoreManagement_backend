@@ -2,11 +2,13 @@ import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
 import Order from '../models/Order.js';
 import Wallet from '../models/Wallet.js';
+import CustomerDue from '../models/CustomerDue.js';
 import AuditLog from '../models/AuditLog.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import ExcelJS from 'exceljs';
 import redisClient from '../config/redis.js';
+import webhookService from '../services/webhookService.js';
 // @desc    Add loyalty points to customer
 // @route   POST /api/customers/:id/loyalty
 export const updateLoyaltyPoints = asyncHandler(async (req, res) => {
@@ -40,7 +42,11 @@ export const getCustomers = asyncHandler(async (req, res) => {
     const search = req.query.search?.trim();
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
-    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}:s${search || ''}:d${startDate || ''}-${endDate || ''}`;
+    // Supply Shops (segment: 'Wholesale') get their own dedicated page/list —
+    // the general Customers page excludes them so its list/counts stay about
+    // retail-facing customers only.
+    const excludeSegment = req.query.excludeSegment?.trim();
+    const cacheKey = `customers:${req.tenantId}:p${page}:l${limit}:s${search || ''}:d${startDate || ''}-${endDate || ''}:ex${excludeSegment || ''}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached)
@@ -56,6 +62,9 @@ export const getCustomers = asyncHandler(async (req, res) => {
     }
     if (startDate && endDate) {
         query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+    if (excludeSegment) {
+        query.segment = { $ne: excludeSegment };
     }
     const customers = await Customer.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
     const total = await Customer.countDocuments(query);
@@ -85,6 +94,7 @@ export const createCustomer = asyncHandler(async (req, res) => {
         entityId: customer._id,
         details: `Created customer ${customer.name}`,
     });
+    webhookService.trigger('customer.created', req.tenantId.toString(), customer);
     res.status(201).json(new ApiResponse(201, customer));
 });
 // @desc    Get customer by ID with purchase history
@@ -115,11 +125,14 @@ export const getCustomerById = asyncHandler(async (req, res) => {
         .populate('userId', 'name')
         .sort({ createdAt: -1 })
         .limit(20);
+    const due = await CustomerDue.findOne({ customer: customer._id, storeId: req.tenantId });
+    const dueHistory = due ? due.transactions.slice(-20).reverse() : [];
     res.status(200).json(new ApiResponse(200, {
         ...customer.toObject(),
         recentOrders,
         totalSpend: totalSpend[0]?.total || 0,
         activityLog,
+        dueHistory,
     }));
 });
 // @desc    Update customer details (notes, tags, segment, etc.)
@@ -217,16 +230,234 @@ export const updateWalletBalance = asyncHandler(async (req, res) => {
     }
     res.status(200).json(new ApiResponse(200, customer, `Wallet ${action}ed successfully. New Balance: ${customer.walletBalance}`));
 });
+// @desc    Record a payment against a customer's outstanding dues (from a partial/
+//          unpaid order) — mirrors updateWalletBalance's transactional pattern.
+// @route   POST /api/customers/:id/dues/payment
+export const recordDuePayment = asyncHandler(async (req, res) => {
+    const { amount, method, reference, reason } = req.body;
+    if (!amount || amount <= 0) {
+        return res.status(400).json(new ApiResponse(400, null, 'Invalid amount'));
+    }
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    let customer;
+    try {
+        customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId }).session(session);
+        if (!customer) {
+            await session.abortTransaction();
+            return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
+        }
+        if (amount > customer.dueBalance) {
+            await session.abortTransaction();
+            return res.status(400).json(new ApiResponse(400, null, 'Payment exceeds outstanding balance'));
+        }
+        const newBalance = customer.dueBalance - amount;
+        customer.dueBalance = newBalance;
+        await customer.save({ session });
+        await CustomerDue.findOneAndUpdate({ customer: customer._id, storeId: req.tenantId }, {
+            $inc: { balance: -amount },
+            $push: {
+                transactions: {
+                    type: 'PAYMENT',
+                    amount,
+                    reason: reason || `Payment received via ${method || 'Cash'}${reference ? ` (${reference})` : ''}`,
+                    date: new Date(),
+                },
+            },
+        }, { session, upsert: true });
+        await AuditLog.create([
+            {
+                userId: req.user?._id,
+                storeId: req.tenantId,
+                action: 'DUE_PAYMENT_RECEIVED',
+                entity: 'Customer',
+                entityId: customer._id,
+                details: `Recorded payment of ${amount} against dues. New balance: ${newBalance}`,
+            },
+        ], { session });
+        await session.commitTransaction();
+    }
+    catch (err) {
+        await session.abortTransaction();
+        throw err;
+    }
+    finally {
+        session.endSession();
+    }
+    res.status(200).json(new ApiResponse(200, customer, `Payment recorded successfully. New Balance Due: ${customer.dueBalance}`));
+});
+// @desc    List customers with an outstanding due balance (accounts receivable)
+// @route   GET /api/customers/dues
+export const getCustomersWithDues = asyncHandler(async (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const search = req.query.search?.trim();
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
+    const query = { storeId: req.tenantId, dueBalance: { $gt: 0 } };
+    if (search) {
+        query.$or = [{ name: { $regex: search, $options: 'i' } }, { phone: { $regex: search, $options: 'i' } }];
+    }
+    if (startDate && endDate) {
+        query.updatedAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+    const customers = await Customer.find(query).sort({ dueBalance: -1 }).skip(skip).limit(limit).lean();
+    const total = await Customer.countDocuments(query);
+    const totalOutstanding = await Customer.aggregate([
+        { $match: { storeId: new mongoose.Types.ObjectId(req.tenantId), dueBalance: { $gt: 0 } } },
+        { $group: { _id: null, total: { $sum: '$dueBalance' } } },
+    ]);
+    res.status(200).json(new ApiResponse(200, {
+        customers,
+        totalOutstanding: totalOutstanding[0]?.total || 0,
+        pagination: {
+            total,
+            page,
+            limit,
+            pages: Math.ceil(total / limit),
+        },
+    }));
+});
+// @desc    List B2B "shops" this store supplies products to — Wholesale-segment
+//          customers, with per-shop supply totals (quantity/value/paid/due).
+//          A shop IS a Customer (segment: 'Wholesale') and a supply is a regular
+//          Order — no separate model, this only adds the aggregate view over
+//          the existing data.
+// @route   GET /api/customers/shops
+export const getSupplyShops = asyncHandler(async (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const search = req.query.search?.trim();
+    const query = { storeId: req.tenantId, segment: 'Wholesale' };
+    if (search) {
+        query.$or = [{ name: { $regex: search, $options: 'i' } }, { phone: { $regex: search, $options: 'i' } }];
+    }
+    const shops = await Customer.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+    const total = await Customer.countDocuments(query);
+    const shopIds = shops.map((s) => s._id);
+    const [facetResult] = await Order.aggregate([
+        {
+            $match: {
+                storeId: new mongoose.Types.ObjectId(req.tenantId),
+                customer: { $in: shopIds },
+                status: { $ne: 'Cancelled' },
+            },
+        },
+        {
+            $facet: {
+                orderLevel: [
+                    { $group: { _id: '$customer', totalOrders: { $sum: 1 }, totalValue: { $sum: '$grandTotal' } } },
+                ],
+                itemLevel: [
+                    { $unwind: '$items' },
+                    { $group: { _id: '$customer', totalQuantitySupplied: { $sum: '$items.quantity' } } },
+                ],
+            },
+        },
+    ]);
+    const orderStatsById = new Map((facetResult?.orderLevel || []).map((s) => [s._id.toString(), s]));
+    const qtyStatsById = new Map((facetResult?.itemLevel || []).map((s) => [s._id.toString(), s]));
+    const shopsWithStats = shops.map((shop) => {
+        const orderStats = orderStatsById.get(shop._id.toString()) || { totalOrders: 0, totalValue: 0 };
+        const qtyStats = qtyStatsById.get(shop._id.toString()) || { totalQuantitySupplied: 0 };
+        const dueBalance = shop.dueBalance || 0;
+        return {
+            ...shop,
+            totalOrders: orderStats.totalOrders,
+            totalValue: orderStats.totalValue,
+            totalQuantitySupplied: qtyStats.totalQuantitySupplied,
+            totalPaid: Math.max(orderStats.totalValue - dueBalance, 0),
+            dueBalance,
+        };
+    });
+    res.status(200).json(new ApiResponse(200, {
+        shops: shopsWithStats,
+        pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+    }));
+});
+// @desc    Per-product breakdown of what's been supplied to one shop, plus totals.
+// @route   GET /api/customers/:id/supply-summary
+export const getSupplyOrderSummary = asyncHandler(async (req, res) => {
+    const customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId });
+    if (!customer) {
+        return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
+    }
+    const matchStage = {
+        storeId: new mongoose.Types.ObjectId(req.tenantId),
+        customer: customer._id,
+        status: { $ne: 'Cancelled' },
+    };
+    const [orderLevel] = await Order.aggregate([
+        { $match: matchStage },
+        { $group: { _id: null, totalOrders: { $sum: 1 }, totalValue: { $sum: '$grandTotal' } } },
+    ]);
+    const productBreakdown = await Order.aggregate([
+        { $match: matchStage },
+        { $unwind: '$items' },
+        {
+            $group: {
+                _id: '$items.product',
+                name: { $first: '$items.name' },
+                totalQuantity: { $sum: '$items.quantity' },
+                totalValue: { $sum: '$items.total' },
+            },
+        },
+        { $sort: { totalQuantity: -1 } },
+    ]);
+    const totalOrders = orderLevel?.totalOrders || 0;
+    const totalValue = orderLevel?.totalValue || 0;
+    const totalQuantitySupplied = productBreakdown.reduce((sum, p) => sum + p.totalQuantity, 0);
+    const dueBalance = customer.dueBalance || 0;
+    res.status(200).json(new ApiResponse(200, {
+        totalOrders,
+        totalValue,
+        totalQuantitySupplied,
+        totalPaid: Math.max(totalValue - dueBalance, 0),
+        dueBalance,
+        products: productBreakdown.map((p) => ({
+            productId: p._id,
+            name: p.name,
+            totalQuantity: p.totalQuantity,
+            totalValue: p.totalValue,
+        })),
+    }));
+});
+// @desc    Log that a WhatsApp template message was sent to this customer
+//          directly (not tied to a specific order) — mirrors
+//          orderController.logWhatsAppSent for the customer-level templates.
+// @route   POST /api/customers/:id/whatsapp-log
+export const logCustomerWhatsAppSent = asyncHandler(async (req, res) => {
+    const { template } = req.body;
+    const customer = await Customer.findOne({ _id: req.params.id, storeId: req.tenantId });
+    if (!customer) {
+        return res.status(404).json(new ApiResponse(404, null, 'Customer not found'));
+    }
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: req.tenantId,
+        action: 'WHATSAPP_SENT',
+        entity: 'Customer',
+        entityId: customer._id,
+        details: `Sent "${template || 'WhatsApp'}" message`,
+    });
+    res.status(200).json(new ApiResponse(200, null, 'Logged'));
+});
 // @desc    Get top-level customer CRM analytics
 // @route   GET /api/customers/analytics/summary
 export const getCustomerAnalytics = asyncHandler(async (req, res) => {
     const storeId = req.tenantId;
-    const totalCustomers = await Customer.countDocuments({ storeId });
+    // Supply Shops (segment: 'Wholesale') have their own dedicated stats on the
+    // Supply Shops page — excluded here so these stay about retail customers.
+    const wholesaleIds = (await Customer.find({ storeId, segment: 'Wholesale' }).select('_id').lean()).map((c) => c._id);
+    const totalCustomers = await Customer.countDocuments({ storeId, segment: { $ne: 'Wholesale' } });
     // Customers created in the last 30 days
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const newCustomers = await Customer.countDocuments({
         storeId,
+        segment: { $ne: 'Wholesale' },
         createdAt: { $gte: thirtyDaysAgo },
     });
     // Customers who bought more than once (Retention heuristic)
@@ -236,7 +467,7 @@ export const getCustomerAnalytics = asyncHandler(async (req, res) => {
             $match: {
                 storeId: new mongoose.Types.ObjectId(storeId),
                 status: 'Completed',
-                customer: { $exists: true, $ne: null },
+                customer: { $exists: true, $ne: null, $nin: wholesaleIds },
             },
         },
         { $group: { _id: '$customer', purchaseCount: { $sum: 1 } } },

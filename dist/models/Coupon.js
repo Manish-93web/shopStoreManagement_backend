@@ -2,8 +2,10 @@ import mongoose, { Schema } from 'mongoose';
 const CouponSchema = new Schema({
     code: { type: String, required: true, uppercase: true, trim: true },
     description: { type: String },
-    discountType: { type: String, enum: ['Percentage', 'FixedAmount'], required: true },
-    discountValue: { type: Number, required: true },
+    discountType: { type: String, enum: ['Percentage', 'FixedAmount', 'BOGO'], required: true },
+    discountValue: { type: Number, required: true, default: 0 },
+    buyQuantity: { type: Number },
+    getQuantity: { type: Number },
     minPurchaseAmount: { type: Number, default: 0 },
     maxDiscountAmount: { type: Number },
     validFrom: { type: Date, default: Date.now },

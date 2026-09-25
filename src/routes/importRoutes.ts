@@ -34,4 +34,20 @@ router.post(
     importController.importProducts
 );
 
+router.post(
+    '/customers',
+    protect,
+    authorize('STORE_OWNER', 'MANAGER', 'SUPER_ADMIN'),
+    upload.single('file'),
+    importController.importCustomers
+);
+
+router.post(
+    '/suppliers',
+    protect,
+    authorize('STORE_OWNER', 'MANAGER', 'SUPER_ADMIN'),
+    upload.single('file'),
+    importController.importSuppliers
+);
+
 export default router;

@@ -21,6 +21,9 @@ export interface IStore extends Document {
     subscriptionStatus: 'Active' | 'Past Due' | 'Cancelled' | 'Trialing';
     status: 'Pending' | 'Approved' | 'Suspended';
     trialEndsAt?: Date;
+    trialWarned3Day?: boolean;
+    trialWarned1Day?: boolean;
+    renewalReminderSentAt?: Date;
     featuresEnabled: string[];
     currentMonthOrders: number;
     currentProductsCount: number;
@@ -75,6 +78,11 @@ const StoreSchema: Schema = new Schema(
             default: 'Trialing',
         },
         trialEndsAt: { type: Date, default: () => new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) }, // 14-day trial
+        // Set once each warning has been sent, so the daily cron never re-notifies
+        // the owner for the same trial window.
+        trialWarned3Day: { type: Boolean, default: false },
+        trialWarned1Day: { type: Boolean, default: false },
+        renewalReminderSentAt: { type: Date },
         featuresEnabled: [{ type: String }],
         currentMonthOrders: { type: Number, default: 0 },
         currentProductsCount: { type: Number, default: 0 },

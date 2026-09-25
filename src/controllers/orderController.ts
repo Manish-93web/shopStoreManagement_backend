@@ -20,6 +20,73 @@ import Coupon from '../models/Coupon.js';
 import Loyalty from '../models/Loyalty.js';
 import redisClient, { bumpCacheVersion, getCacheVersion } from '../config/redis.js';
 import CustomerDue from '../models/CustomerDue.js';
+import InventoryBatch from '../models/InventoryBatch.js';
+import ProductSerial from '../models/ProductSerial.js';
+
+// Batch (FEFO — soonest-expiring first) and serial (FIFO, auto-assigned since
+// POS checkout has no per-unit serial picker) consumption for a sold item.
+// Best-effort and non-blocking: most products aren't under batch/serial
+// tracking at all, and Inventory.quantity (updated by the caller) remains the
+// authoritative stock count regardless of whether any batch/serial records
+// exist to reconcile against.
+async function consumeStockRecords(storeId: string, item: any, orderId: mongoose.Types.ObjectId) {
+    let remaining = item.quantity;
+    const batchQuery: any = { storeId, product: item.product, status: 'Active', currentQuantity: { $gt: 0 } };
+    if (item.variant) batchQuery.variant = item.variant;
+    const batches = await InventoryBatch.find(batchQuery).sort({ expiryDate: 1 });
+    for (const batch of batches) {
+        if (remaining <= 0) break;
+        const deduct = Math.min(batch.currentQuantity, remaining);
+        batch.currentQuantity -= deduct;
+        remaining -= deduct;
+        await batch.save();
+    }
+
+    const serialQuery: any = { storeId, product: item.product, status: 'In Stock' };
+    if (item.variant) serialQuery.variant = item.variant;
+    const serials = await ProductSerial.find(serialQuery).sort({ createdAt: 1 }).limit(item.quantity);
+    for (const serial of serials) {
+        serial.status = 'Sold';
+        serial.currentOrder = orderId;
+        serial.history.push({ action: 'Sold', date: new Date(), referenceId: orderId });
+        await serial.save();
+    }
+}
+
+// Reverse of consumeStockRecords, for order cancellation — without this, a
+// cancelled order would credit Inventory.quantity back but leave batches
+// permanently under-counted and serials permanently stuck "Sold".
+async function restoreStockRecords(storeId: string, item: any, orderId: mongoose.Types.ObjectId) {
+    let remaining = item.quantity;
+    const batchQuery: any = { storeId, product: item.product, status: 'Active' };
+    if (item.variant) batchQuery.variant = item.variant;
+    // Best-effort — this doesn't know exactly which batch(es) the original sale
+    // drew from, only that some were drawn from in soonest-expiry-first order,
+    // so it credits back in the reverse (latest-expiry-first) order among
+    // batches with room.
+    const batches = await InventoryBatch.find(batchQuery).sort({ expiryDate: -1 });
+    for (const batch of batches) {
+        if (remaining <= 0) break;
+        const room = batch.initialQuantity - batch.currentQuantity;
+        if (room <= 0) continue;
+        const credit = Math.min(room, remaining);
+        batch.currentQuantity += credit;
+        remaining -= credit;
+        await batch.save();
+    }
+
+    // Serials are precise, unlike batches — this order's id was stamped on
+    // exactly the units it sold, so the reversal is exact, not a heuristic.
+    const serialQuery: any = { storeId, product: item.product, status: 'Sold', currentOrder: orderId };
+    if (item.variant) serialQuery.variant = item.variant;
+    const serials = await ProductSerial.find(serialQuery);
+    for (const serial of serials) {
+        serial.status = 'In Stock';
+        serial.currentOrder = undefined;
+        serial.history.push({ action: 'Returned to stock (order cancelled)', date: new Date(), referenceId: orderId });
+        await serial.save();
+    }
+}
 
 // @desc    Create a new POS order
 // @route   POST /api/orders
@@ -247,6 +314,12 @@ export const createOrder = asyncHandler(async (req: TenantRequest, res: Response
             { returnDocument: 'after' }
         );
 
+        try {
+            await consumeStockRecords(req.tenantId!.toString(), item, order._id as any);
+        } catch (err) {
+            console.error(`Batch/serial consumption failed for product ${item.product}:`, err);
+        }
+
         // Notify clients about stock change
         emitToStore(req.tenantId!.toString(), 'inventory-update', {
             productId: item.product,
@@ -307,6 +380,7 @@ export const getOrders = asyncHandler(async (req: TenantRequest, res: Response) 
     const orders = await Order.find(query)
         .populate('customer')
         .populate('cashier', 'name')
+        .populate('items.product', 'name images')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -379,6 +453,12 @@ export const cancelOrder = asyncHandler(async (req: TenantRequest, res: Response
                 { $inc: { quantity: item.quantity } },
                 { session, upsert: true }
             );
+
+            try {
+                await restoreStockRecords(req.tenantId!.toString(), item, order._id as any);
+            } catch (err) {
+                console.error(`Batch/serial restoration failed for product ${item.product}:`, err);
+            }
         }
 
         const walletPayment = order.paymentDetails.find((p) => p.method === 'Wallet');

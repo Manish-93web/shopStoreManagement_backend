@@ -8,6 +8,7 @@ import {
     updateEmployee,
     deleteEmployee,
     getStaffPerformance,
+    getEmployeeActivityLog,
 } from '../controllers/employeeController.js';
 
 const router = express.Router();
@@ -22,5 +23,7 @@ router
     .route('/:id')
     .put(authorize('STORE_OWNER', 'MANAGER'), updateEmployee)
     .delete(authorize('STORE_OWNER'), deleteEmployee);
+
+router.get('/:id/activity-log', authorize('STORE_OWNER', 'MANAGER'), getEmployeeActivityLog);
 
 export default router;

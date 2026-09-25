@@ -6,6 +6,7 @@ const ApiKeySchema = new Schema({
     tenantId: { type: String, required: true, index: true },
     permissions: { type: [String], default: ['read:all'] },
     isActive: { type: Boolean, default: true },
-    lastUsedAt: { type: Date }
+    lastUsedAt: { type: Date },
+    usageCount: { type: Number, default: 0 }
 }, { timestamps: true });
 export default mongoose.model('ApiKey', ApiKeySchema);

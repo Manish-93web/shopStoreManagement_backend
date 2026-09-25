@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import User, { UserRole } from '../models/User.js';
 import Employee from '../models/Employee.js';
+import AuditLog from '../models/AuditLog.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
@@ -113,12 +114,16 @@ export const createEmployee = asyncHandler(async (req: TenantRequest, res: Respo
 // @desc    Update employee details
 // @route   PUT /api/employees/:id
 export const updateEmployee = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { name, role, isActive } = req.body;
-    const employee = await User.findOneAndUpdate(
-        { _id: req.params.id, storeId: req.tenantId as any },
-        { name, role, isActive },
-        { returnDocument: 'after' }
-    ).select('-password -refreshToken');
+    const { name, role, isActive, restrictedPermissions } = req.body;
+    const update: any = { name, role, isActive };
+    // Only touch this field when the caller actually sent it, so a plain
+    // name/role/isActive edit from elsewhere in the app can never accidentally
+    // wipe out permission restrictions that were set separately.
+    if (restrictedPermissions !== undefined) update.restrictedPermissions = restrictedPermissions;
+
+    const employee = await User.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId as any }, update, {
+        returnDocument: 'after',
+    }).select('-password -refreshToken');
 
     if (!employee) {
         return res.status(404).json(new ApiResponse(404, null, 'Employee not found'));
@@ -171,4 +176,41 @@ export const getStaffPerformance = asyncHandler(async (req: TenantRequest, res: 
     ]);
 
     res.status(200).json(new ApiResponse(200, metrics, 'Staff performance metrics retrieved'));
+});
+
+// @desc    Get a single staff member's full activity trail (logins, and any
+//          other action logged against them via AuditLog — sales, inventory
+//          adjustments, etc. — as those call sites adopt logAudit) in one
+//          query, instead of grepping the store-wide audit log for them.
+//          Reuses the existing AuditLog collection; no separate log store.
+// @route   GET /api/v1/employees/:id/activity-log
+export const getEmployeeActivityLog = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { page = 1, limit = 20 } = req.query;
+
+    // Verify the employee belongs to this store before leaking any activity —
+    // otherwise a manager could pass an arbitrary user id from another store.
+    const employee = await User.findOne({ _id: req.params.id, storeId: req.tenantId as any }).select('name email role');
+    if (!employee) {
+        return res.status(404).json(new ApiResponse(404, null, 'Employee not found'));
+    }
+
+    const query = { storeId: req.tenantId as any, userId: employee._id };
+
+    const [logs, total] = await Promise.all([
+        AuditLog.find(query)
+            .sort({ createdAt: -1 })
+            .limit(Number(limit))
+            .skip((Number(page) - 1) * Number(limit)),
+        AuditLog.countDocuments(query),
+    ]);
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            employee,
+            logs,
+            totalPages: Math.ceil(total / Number(limit)),
+            currentPage: Number(page),
+            total,
+        })
+    );
 });

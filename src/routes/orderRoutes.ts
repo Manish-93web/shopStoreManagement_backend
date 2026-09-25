@@ -4,6 +4,7 @@ import { tenantHandler } from '../middleware/tenantHandler.js';
 import { checkTrialExpiry } from '../middleware/usageLimits.js';
 import { checkFeatureAccess } from '../middleware/featureAccess.js';
 import { checkUsageLimits } from '../middleware/usageLimits.js';
+import { requirePermission } from '../middleware/permissions.js';
 import { createOrder, getOrders, getOrderById, cancelOrder, logWhatsAppSent } from '../controllers/orderController.js';
 
 const router = express.Router();
@@ -14,7 +15,7 @@ router.route('/').post(checkFeatureAccess('POS Access'), checkUsageLimits('ORDER
 
 router.route('/:id').get(getOrderById);
 
-router.route('/:id/cancel').put(cancelOrder);
+router.route('/:id/cancel').put(requirePermission('cancel_orders'), cancelOrder);
 
 router.route('/:id/whatsapp-log').post(logWhatsAppSent);
 

@@ -159,15 +159,22 @@ export const subscriptionController = {
             // query, and matches the date semantics used by every other filter in this batch.
             query.createdAt = {};
             if (startDate)
-                query.createdAt.$gte = dayjs(startDate).startOf('day').toDate();
+                query.createdAt.$gte = dayjs(startDate)
+                    .startOf('day')
+                    .toDate();
             if (endDate)
-                query.createdAt.$lte = dayjs(endDate).endOf('day').toDate();
+                query.createdAt.$lte = dayjs(endDate)
+                    .endOf('day')
+                    .toDate();
         }
         if (search) {
             const term = search;
             const matchingStores = await Store.find({ name: { $regex: term, $options: 'i' } }).select('_id');
             const storeIds = matchingStores.map((s) => s._id);
-            query.$or = [{ invoiceNumber: { $regex: term, $options: 'i' } }, ...(storeIds.length ? [{ storeId: { $in: storeIds } }] : [])];
+            query.$or = [
+                { invoiceNumber: { $regex: term, $options: 'i' } },
+                ...(storeIds.length ? [{ storeId: { $in: storeIds } }] : []),
+            ];
         }
         const invoices = await SubscriptionInvoice.find(query)
             .populate('storeId', 'name')

@@ -11,8 +11,13 @@ const ShiftSchema = new Schema({
     discrepancy: { type: Number },
     totalCardSales: { type: Number, default: 0 },
     totalCashSales: { type: Number, default: 0 },
+    totalUpiSales: { type: Number, default: 0 },
+    totalWalletSales: { type: Number, default: 0 },
+    totalRefunds: { type: Number, default: 0 },
     notes: { type: String }
 }, {
     timestamps: true
 });
+ShiftSchema.index({ storeId: 1, status: 1 });
+ShiftSchema.index({ storeId: 1, userId: 1, status: 1 });
 export default mongoose.model('Shift', ShiftSchema);

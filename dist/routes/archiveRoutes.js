@@ -9,4 +9,7 @@ router.use(protect, tenantHandler, checkTrialExpiry);
 // page; running an archive scan stays store-owner-only (it acts on a single tenant's data).
 router.get('/jobs', authorize('STORE_OWNER', 'SUPER_ADMIN'), archiveController.getJobs);
 router.post('/run', authorize('STORE_OWNER'), archiveController.runArchive);
+router.post('/:jobId/restore', authorize('STORE_OWNER'), archiveController.restoreArchive);
+router.get('/policy', authorize('STORE_OWNER'), archiveController.getPolicy);
+router.put('/policy', authorize('STORE_OWNER'), archiveController.updatePolicy);
 export default router;

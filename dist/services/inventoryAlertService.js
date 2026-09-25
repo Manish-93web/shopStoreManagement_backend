@@ -2,6 +2,7 @@ import Inventory from '../models/Inventory.js';
 import InventoryBatch from '../models/InventoryBatch.js';
 import User from '../models/User.js';
 import { notificationService } from './notificationService.js';
+import webhookService from './webhookService.js';
 import dayjs from 'dayjs';
 export const inventoryAlertService = {
     /**
@@ -14,8 +15,10 @@ export const inventoryAlertService = {
         }).populate('product', 'name sku');
         if (lowStockItems.length === 0)
             return;
-        // Get store owners/managers to notify
-        const recipients = await User.find({ storeId, role: { $in: ['Owner', 'Manager'] }, isActive: true });
+        // Get store owners/managers to notify — role values must match the real
+        // UserRole enum ('STORE_OWNER'/'MANAGER'); the previous 'Owner'/'Manager'
+        // strings never matched any user, so these alerts silently reached no one.
+        const recipients = await User.find({ storeId, role: { $in: ['STORE_OWNER', 'MANAGER'] }, isActive: true });
         for (const recipient of recipients) {
             for (const item of lowStockItems) {
                 const product = item.product;
@@ -28,6 +31,19 @@ export const inventoryAlertService = {
                     actionUrl: '/inventory'
                 });
             }
+        }
+        // 'inventory.low' has been a selectable webhook event since this app's
+        // webhook system shipped, but nothing ever called trigger() for it —
+        // integrations subscribed to it silently never received anything.
+        for (const item of lowStockItems) {
+            const product = item.product;
+            webhookService.trigger('inventory.low', storeId, {
+                product: product?._id,
+                productName: product?.name,
+                sku: product?.sku,
+                quantity: item.quantity,
+                lowStockThreshold: item.lowStockThreshold,
+            });
         }
     },
     /**
@@ -42,7 +58,7 @@ export const inventoryAlertService = {
         }).populate('product', 'name sku');
         if (expiringBatches.length === 0)
             return;
-        const recipients = await User.find({ storeId, role: { $in: ['Owner', 'Manager'] }, isActive: true });
+        const recipients = await User.find({ storeId, role: { $in: ['STORE_OWNER', 'MANAGER'] }, isActive: true });
         for (const recipient of recipients) {
             for (const batch of expiringBatches) {
                 const product = batch.product;
