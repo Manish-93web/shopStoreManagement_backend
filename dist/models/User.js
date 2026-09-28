@@ -16,12 +16,13 @@ const UserSchema = new Schema({
     role: {
         type: String,
         enum: Object.values(UserRole),
-        default: UserRole.STORE_OWNER
+        default: UserRole.STORE_OWNER,
     },
     stores: [{ type: Schema.Types.ObjectId, ref: 'Store' }],
     storeId: { type: Schema.Types.ObjectId, ref: 'Store' },
     isActive: { type: Boolean, default: true },
     restrictedPermissions: [{ type: String }],
+    allowedMenus: { type: [String], default: undefined },
     refreshToken: { type: String },
     notificationSettings: {
         inApp: { type: Boolean, default: true },

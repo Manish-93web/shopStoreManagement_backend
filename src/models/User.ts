@@ -24,6 +24,12 @@ export interface IUser extends Document {
     // only CASHIER/INVENTORY_STAFF are ever subject to them (MANAGER keeps the
     // same full trust it already has everywhere else in the app).
     restrictedPermissions?: string[];
+    // Sidebar-menu allow-list, keyed by the nav item's href (e.g. "/pos",
+    // "/inventory"). undefined/unset means no restriction — the user sees
+    // every menu their role normally would (fully backward compatible for
+    // every existing account). Only meaningful for CASHIER/INVENTORY_STAFF,
+    // set by the store owner from the Employees page.
+    allowedMenus?: string[];
     refreshToken?: string;
     notificationSettings?: {
         inApp: boolean;
@@ -49,6 +55,7 @@ const UserSchema: Schema = new Schema(
         storeId: { type: Schema.Types.ObjectId, ref: 'Store' },
         isActive: { type: Boolean, default: true },
         restrictedPermissions: [{ type: String }],
+        allowedMenus: { type: [String], default: undefined },
         refreshToken: { type: String },
         notificationSettings: {
             inApp: { type: Boolean, default: true },

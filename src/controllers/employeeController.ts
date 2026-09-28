@@ -35,7 +35,7 @@ export const getEmployees = asyncHandler(async (req: TenantRequest, res: Respons
 // @desc    Create a new employee (add user to store)
 // @route   POST /api/employees
 export const createEmployee = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { name, email, password, role, designation, salary, joiningDate } = req.body;
+    const { name, email, password, role, designation, salary, joiningDate, allowedMenus } = req.body;
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -73,6 +73,7 @@ export const createEmployee = asyncHandler(async (req: TenantRequest, res: Respo
                     role: role || UserRole.CASHIER,
                     storeId: req.tenantId as any,
                     stores: [req.tenantId as any],
+                    ...(Array.isArray(allowedMenus) ? { allowedMenus } : {}),
                 },
             ],
             { session }
@@ -114,12 +115,13 @@ export const createEmployee = asyncHandler(async (req: TenantRequest, res: Respo
 // @desc    Update employee details
 // @route   PUT /api/employees/:id
 export const updateEmployee = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const { name, role, isActive, restrictedPermissions } = req.body;
+    const { name, role, isActive, restrictedPermissions, allowedMenus } = req.body;
     const update: any = { name, role, isActive };
-    // Only touch this field when the caller actually sent it, so a plain
+    // Only touch these fields when the caller actually sent them, so a plain
     // name/role/isActive edit from elsewhere in the app can never accidentally
-    // wipe out permission restrictions that were set separately.
+    // wipe out permission restrictions or a menu allow-list set separately.
     if (restrictedPermissions !== undefined) update.restrictedPermissions = restrictedPermissions;
+    if (allowedMenus !== undefined) update.allowedMenus = allowedMenus;
 
     const employee = await User.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId as any }, update, {
         returnDocument: 'after',

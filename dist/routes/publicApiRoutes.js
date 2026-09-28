@@ -43,7 +43,7 @@ router.post('/orders', requirePermission('write:orders'), async (req, res) => {
             storeId: req.tenantId,
             items,
             grandTotal,
-            paymentDetails
+            paymentDetails,
         });
         res.status(201).json({ success: true, data: order });
     }

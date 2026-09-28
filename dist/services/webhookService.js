@@ -16,7 +16,7 @@ class WebhookService {
             const webhooks = await Webhook.find({
                 tenantId,
                 isActive: true,
-                events: event
+                events: event,
             });
             if (webhooks.length === 0)
                 return;
@@ -50,10 +50,7 @@ class WebhookService {
         const timestamp = Date.now().toString();
         const body = JSON.stringify(payload);
         // Generate HMAC signature
-        const signature = crypto
-            .createHmac('sha256', webhook.secret)
-            .update(`${timestamp}.${body}`)
-            .digest('hex');
+        const signature = crypto.createHmac('sha256', webhook.secret).update(`${timestamp}.${body}`).digest('hex');
         try {
             const response = await axios.post(webhook.url, body, {
                 headers: {
@@ -61,9 +58,9 @@ class WebhookService {
                     'X-Webhook-Event': event,
                     'X-Webhook-Timestamp': timestamp,
                     'X-Webhook-Signature': signature,
-                    'User-Agent': 'Retail-SaaS-Webhook-Dispatcher'
+                    'User-Agent': 'Retail-SaaS-Webhook-Dispatcher',
                 },
-                timeout: 5000 // 5 second timeout
+                timeout: 5000, // 5 second timeout
             });
             // Log success
             await WebhookLog.create({
@@ -74,7 +71,7 @@ class WebhookService {
                 responseBody: typeof response.data === 'string' ? response.data : JSON.stringify(response.data),
                 status: 'success',
                 tenantId: webhook.tenantId,
-                attempt
+                attempt,
             });
         }
         catch (error) {
@@ -88,7 +85,7 @@ class WebhookService {
                 status: 'failed',
                 errorMessage: error.message,
                 tenantId: webhook.tenantId,
-                attempt
+                attempt,
             });
             console.error(`Webhook delivery failed to ${webhook.url} (attempt ${attempt}):`, error.message);
             throw error;

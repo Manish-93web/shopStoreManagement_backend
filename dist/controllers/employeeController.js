@@ -29,7 +29,7 @@ export const getEmployees = asyncHandler(async (req, res) => {
 // @desc    Create a new employee (add user to store)
 // @route   POST /api/employees
 export const createEmployee = asyncHandler(async (req, res) => {
-    const { name, email, password, role, designation, salary, joiningDate } = req.body;
+    const { name, email, password, role, designation, salary, joiningDate, allowedMenus } = req.body;
     const existingUser = await User.findOne({ email });
     if (existingUser) {
         return res.status(400).json(new ApiResponse(400, null, 'Email already in use'));
@@ -56,6 +56,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
                 role: role || UserRole.CASHIER,
                 storeId: req.tenantId,
                 stores: [req.tenantId],
+                ...(Array.isArray(allowedMenus) ? { allowedMenus } : {}),
             },
         ], { session });
         const employee = await Employee.create([
@@ -85,14 +86,18 @@ export const createEmployee = asyncHandler(async (req, res) => {
 // @desc    Update employee details
 // @route   PUT /api/employees/:id
 export const updateEmployee = asyncHandler(async (req, res) => {
-    const { name, role, isActive, restrictedPermissions } = req.body;
+    const { name, role, isActive, restrictedPermissions, allowedMenus } = req.body;
     const update = { name, role, isActive };
-    // Only touch this field when the caller actually sent it, so a plain
+    // Only touch these fields when the caller actually sent them, so a plain
     // name/role/isActive edit from elsewhere in the app can never accidentally
-    // wipe out permission restrictions that were set separately.
+    // wipe out permission restrictions or a menu allow-list set separately.
     if (restrictedPermissions !== undefined)
         update.restrictedPermissions = restrictedPermissions;
-    const employee = await User.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, update, { returnDocument: 'after' }).select('-password -refreshToken');
+    if (allowedMenus !== undefined)
+        update.allowedMenus = allowedMenus;
+    const employee = await User.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, update, {
+        returnDocument: 'after',
+    }).select('-password -refreshToken');
     if (!employee) {
         return res.status(404).json(new ApiResponse(404, null, 'Employee not found'));
     }

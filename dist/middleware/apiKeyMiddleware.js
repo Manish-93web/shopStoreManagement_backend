@@ -8,7 +8,9 @@ export const requireApiKey = async (req, res, next) => {
         rawKey = req.headers.authorization.split(' ')[1];
     }
     if (!rawKey) {
-        return res.status(401).json({ success: false, message: 'Not authorized, API Key required in x-api-key header' });
+        return res
+            .status(401)
+            .json({ success: false, message: 'Not authorized, API Key required in x-api-key header' });
     }
     try {
         // Hash the incoming key

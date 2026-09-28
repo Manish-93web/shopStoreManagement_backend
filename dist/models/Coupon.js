@@ -14,7 +14,7 @@ const CouponSchema = new Schema({
     usageLimitPerCustomer: { type: Number, default: 1 },
     usageCount: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
-    storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true }
+    storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
 }, { timestamps: true });
 CouponSchema.index({ code: 1, storeId: 1 }, { unique: true });
 export default mongoose.model('Coupon', CouponSchema);

@@ -27,11 +27,11 @@ export const importController = {
     // @route   POST /api/import/products
     importProducts: asyncHandler(async (req, res) => {
         if (!req.file) {
-            return res.status(400).json(new ApiResponse(400, null, "No file uploaded"));
+            return res.status(400).json(new ApiResponse(400, null, 'No file uploaded'));
         }
         const worksheet = await loadWorksheet(req.file);
         if (!worksheet)
-            return res.status(400).json(new ApiResponse(400, null, "Invalid worksheet"));
+            return res.status(400).json(new ApiResponse(400, null, 'Invalid worksheet'));
         const session = await mongoose.startSession();
         session.startTransaction();
         try {
@@ -55,7 +55,7 @@ export const importController = {
                     // Find or create category
                     let category = await Category.findOne({ name: catName, storeId });
                     if (!category) {
-                        category = await Category.create([{ name: catName, storeId }], { session }).then(docs => docs[0]);
+                        category = await Category.create([{ name: catName, storeId }], { session }).then((docs) => docs[0]);
                     }
                     const product = new Product({
                         name,
@@ -66,13 +66,13 @@ export const importController = {
                         costPrice,
                         taxRate,
                         storeId,
-                        hasVariants: false
+                        hasVariants: false,
                     });
                     await product.save({ session });
                     const inventory = new Inventory({
                         product: product._id,
                         store: storeId,
-                        quantity: initialStock
+                        quantity: initialStock,
                     });
                     await inventory.save({ session });
                     importedProducts.push(product);
@@ -84,7 +84,7 @@ export const importController = {
             await session.commitTransaction();
             res.status(201).json(new ApiResponse(201, {
                 count: importedProducts.length,
-                errors: errors.length > 0 ? errors : undefined
+                errors: errors.length > 0 ? errors : undefined,
             }, `Imported ${importedProducts.length} products successfully`));
         }
         catch (error) {

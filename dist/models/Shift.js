@@ -14,9 +14,9 @@ const ShiftSchema = new Schema({
     totalUpiSales: { type: Number, default: 0 },
     totalWalletSales: { type: Number, default: 0 },
     totalRefunds: { type: Number, default: 0 },
-    notes: { type: String }
+    notes: { type: String },
 }, {
-    timestamps: true
+    timestamps: true,
 });
 ShiftSchema.index({ storeId: 1, status: 1 });
 ShiftSchema.index({ storeId: 1, userId: 1, status: 1 });

@@ -103,6 +103,7 @@ export const verifyOTP = asyncHandler(async (req: Request, res: Response) => {
                     email: user.email,
                     role: user.role,
                     storeId: user.storeId,
+                    allowedMenus: user.allowedMenus,
                 },
                 accessToken,
                 refreshToken,

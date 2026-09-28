@@ -14,21 +14,21 @@ const calculateShiftTotals = async (storeId, userId, startTime, endTime = new Da
             storeId,
             cashier: userId,
             createdAt: { $gte: startTime, $lte: endTime },
-            status: 'Completed'
+            status: 'Completed',
         }),
         RefundTransaction.find({
             storeId,
             processedBy: userId,
             status: 'Completed',
-            createdAt: { $gte: startTime, $lte: endTime }
-        })
+            createdAt: { $gte: startTime, $lte: endTime },
+        }),
     ]);
     let cashSales = 0;
     let cardSales = 0;
     let upiSales = 0;
     let walletSales = 0;
-    orders.forEach(order => {
-        order.paymentDetails.forEach(payment => {
+    orders.forEach((order) => {
+        order.paymentDetails.forEach((payment) => {
             if (payment.method === 'Cash')
                 cashSales += payment.amount;
             else if (payment.method === 'UPI')
@@ -58,7 +58,7 @@ const migrateLegacySessionIfAny = async (storeId, userId) => {
         startingCash: legacy.openingBalance,
         expectedCash: legacy.openingBalance,
         status: 'Open',
-        notes: `Migrated from legacy register session ${legacy.sessionNumber}`
+        notes: `Migrated from legacy register session ${legacy.sessionNumber}`,
     });
     legacy.status = 'Closed';
     legacy.closingTime = new Date();
@@ -74,7 +74,9 @@ export const startShift = asyncHandler(async (req, res) => {
     // Check if user already has an open shift
     const existingOpenShift = await Shift.findOne({ storeId: req.tenantId, userId, status: 'Open' });
     if (existingOpenShift) {
-        return res.status(400).json(new ApiResponse(400, null, "You already have an open shift. Please close it first."));
+        return res
+            .status(400)
+            .json(new ApiResponse(400, null, 'You already have an open shift. Please close it first.'));
     }
     const shift = await Shift.create({
         storeId: req.tenantId,
@@ -83,9 +85,9 @@ export const startShift = asyncHandler(async (req, res) => {
         expectedCash: startingCash || 0,
         status: 'Open',
         startTime: new Date(),
-        notes
+        notes,
     });
-    res.status(201).json(new ApiResponse(201, shift, "Shift started successfully"));
+    res.status(201).json(new ApiResponse(201, shift, 'Shift started successfully'));
 });
 // @desc    Get current active shift
 // @route   GET /api/v1/shifts/active
@@ -96,7 +98,7 @@ export const getActiveShift = asyncHandler(async (req, res) => {
         shift = await migrateLegacySessionIfAny(req.tenantId, userId.toString());
     }
     if (!shift) {
-        return res.status(200).json(new ApiResponse(200, null, "No active shift found"));
+        return res.status(200).json(new ApiResponse(200, null, 'No active shift found'));
     }
     // Calculate real-time totals
     const { cashSales, cardSales, upiSales, walletSales, totalRefunds } = await calculateShiftTotals(req.tenantId, userId.toString(), shift.startTime);
@@ -109,7 +111,7 @@ export const getActiveShift = asyncHandler(async (req, res) => {
         totalUpiSales: upiSales,
         totalWalletSales: walletSales,
         totalRefunds,
-        expectedCash: currentExpectedCash
+        expectedCash: currentExpectedCash,
     }));
 });
 // @desc    Close current shift
@@ -119,7 +121,7 @@ export const closeShift = asyncHandler(async (req, res) => {
     const userId = req.user._id;
     const shift = await Shift.findOne({ storeId: req.tenantId, userId, status: 'Open' });
     if (!shift) {
-        return res.status(404).json(new ApiResponse(404, null, "No open shift found to close"));
+        return res.status(404).json(new ApiResponse(404, null, 'No open shift found to close'));
     }
     const endTime = new Date();
     const { cashSales, cardSales, upiSales, walletSales, totalRefunds } = await calculateShiftTotals(req.tenantId, userId.toString(), shift.startTime, endTime);
@@ -137,7 +139,7 @@ export const closeShift = asyncHandler(async (req, res) => {
     shift.discrepancy = discrepancy;
     shift.notes = notes;
     await shift.save();
-    res.status(200).json(new ApiResponse(200, shift, "Shift closed successfully"));
+    res.status(200).json(new ApiResponse(200, shift, 'Shift closed successfully'));
 });
 // @desc    Get all shifts (Admin)
 // @route   GET /api/v1/shifts

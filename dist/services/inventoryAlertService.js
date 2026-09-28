@@ -11,7 +11,7 @@ export const inventoryAlertService = {
     checkLowStock: async (storeId) => {
         const lowStockItems = await Inventory.find({
             store: storeId,
-            $expr: { $lte: ['$quantity', '$lowStockThreshold'] }
+            $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
         }).populate('product', 'name sku');
         if (lowStockItems.length === 0)
             return;
@@ -25,10 +25,10 @@ export const inventoryAlertService = {
                 await notificationService.send({
                     recipientId: recipient._id.toString(),
                     storeId,
-                    title: "Low Stock Alert 🚨",
+                    title: 'Low Stock Alert 🚨',
                     message: `Product "${product.name}" (${product.sku}) is running low. Current stock: ${item.quantity}.`,
                     type: 'WARNING',
-                    actionUrl: '/inventory'
+                    actionUrl: '/inventory',
                 });
             }
         }
@@ -54,7 +54,7 @@ export const inventoryAlertService = {
         const expiringBatches = await InventoryBatch.find({
             storeId,
             status: 'Active',
-            expiryDate: { $lte: thirtyDaysFromNow, $gt: new Date() }
+            expiryDate: { $lte: thirtyDaysFromNow, $gt: new Date() },
         }).populate('product', 'name sku');
         if (expiringBatches.length === 0)
             return;
@@ -65,12 +65,12 @@ export const inventoryAlertService = {
                 await notificationService.send({
                     recipientId: recipient._id.toString(),
                     storeId,
-                    title: "Batch Expiry Warning ⚠️",
+                    title: 'Batch Expiry Warning ⚠️',
                     message: `Batch ${batch.batchNumber} of "${product.name}" expires on ${dayjs(batch.expiryDate).format('MMM DD, YYYY')}.`,
                     type: 'ERROR',
-                    actionUrl: '/inventory'
+                    actionUrl: '/inventory',
                 });
             }
         }
-    }
+    },
 };
