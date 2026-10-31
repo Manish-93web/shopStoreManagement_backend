@@ -6,6 +6,7 @@ import {
     getAllStores,
     getTenantAnalytics,
     toggleStoreStatus,
+    changeStorePlan,
     approveStore,
     getSystemAuditLogs,
     broadcastNotification,
@@ -29,6 +30,7 @@ router.get('/stores', getAllStores);
 router.get('/stores/:id/analytics', getTenantAnalytics);
 router.post('/stores/:id/notify', sendTenantNotification);
 router.put('/stores/:id/status', toggleStoreStatus);
+router.put('/stores/:id/plan', changeStorePlan);
 router.put('/stores/:id/approve', approveStore);
 router.get('/audit-logs', getSystemAuditLogs);
 router.post('/broadcast', broadcastNotification);

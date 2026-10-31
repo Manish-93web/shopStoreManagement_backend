@@ -6,6 +6,7 @@ import Order from '../models/Order.js';
 import User from '../models/User.js';
 import AuditLog from '../models/AuditLog.js';
 import Product from '../models/Product.js';
+import Plan from '../models/Plan.js';
 import Customer from '../models/Customer.js';
 import dayjs from 'dayjs';
 import ApiResponse from '../utils/apiResponse.js';
@@ -164,6 +165,49 @@ export const toggleStoreStatus = asyncHandler(async (req: TenantRequest, res: Re
     res.status(200).json(new ApiResponse(200, store, `Store ${store.isActive ? 'Reactivated' : 'Suspended'}`));
 });
 
+// @desc    Change a tenant's subscription plan (upgrade/downgrade) without checkout
+// @route   PUT /api/v1/super-admin/stores/:id/plan
+export const changeStorePlan = asyncHandler(async (req: TenantRequest, res: Response) => {
+    const { planId } = req.body;
+    if (!planId || !mongoose.Types.ObjectId.isValid(planId)) {
+        return res.status(400).json(new ApiResponse(400, null, 'A valid planId is required'));
+    }
+    const [store, plan] = await Promise.all([
+        Store.findById(req.params.id).populate('subscriptionPlan'),
+        Plan.findById(planId),
+    ]);
+    if (!store) return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
+    if (!plan) return res.status(404).json(new ApiResponse(404, null, 'Plan not found'));
+
+    const oldName = (store.subscriptionPlan as any)?.name || 'Trial';
+    store.subscriptionPlan = plan._id as any;
+    store.subscriptionStatus = 'Active';
+    store.lastBillingDate = new Date();
+    await store.save();
+
+    await AuditLog.create({
+        userId: req.user?._id,
+        storeId: store._id,
+        action: 'PLAN_CHANGED',
+        entity: 'Store',
+        entityId: store._id,
+        details: `Super admin changed plan from ${oldName} to ${plan.name}`,
+    });
+
+    await notificationService
+        .send({
+            recipientId: store.owner as any,
+            storeId: store._id as any,
+            title: 'Subscription updated',
+            message: `Your plan has been changed to ${plan.name}.`,
+            type: 'INFO',
+        })
+        .catch(() => undefined);
+
+    await store.populate('subscriptionPlan');
+    res.status(200).json(new ApiResponse(200, store, `Plan changed to ${plan.name}`));
+});
+
 // @desc    Approve/Reject store registration
 // @route   PUT /api/v1/super-admin/stores/:id/approve
 export const approveStore = asyncHandler(async (req: TenantRequest, res: Response) => {
@@ -219,17 +263,15 @@ export const getSystemAuditLogs = asyncHandler(async (req: TenantRequest, res: R
         if (storeIds.length === 0 && userIds.length === 0) {
             // No store/user matches this term — short-circuit to an empty page rather
             // than falling through to an unfiltered query.
-            return res
-                .status(200)
-                .json(
-                    new ApiResponse(200, {
-                        logs: [],
-                        totalPages: 0,
-                        currentPage: Number(page),
-                        distinctActions: [],
-                        distinctEntities: [],
-                    })
-                );
+            return res.status(200).json(
+                new ApiResponse(200, {
+                    logs: [],
+                    totalPages: 0,
+                    currentPage: Number(page),
+                    distinctActions: [],
+                    distinctEntities: [],
+                })
+            );
         }
         query.$or = [
             ...(storeIds.length ? [{ storeId: { $in: storeIds } }] : []),
