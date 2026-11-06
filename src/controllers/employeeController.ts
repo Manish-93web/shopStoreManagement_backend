@@ -8,6 +8,7 @@ import { TenantRequest } from '../middleware/tenantHandler.js';
 import mongoose from 'mongoose';
 import Order from '../models/Order.js';
 import Store from '../models/Store.js';
+import { isTenantApproved } from '../middleware/usageLimits.js';
 
 // @desc    Get all employees for a store
 // @route   GET /api/employees
@@ -44,7 +45,7 @@ export const createEmployee = asyncHandler(async (req: TenantRequest, res: Respo
 
     // Check Plan Limits
     const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
-    if (store && store.subscriptionPlan) {
+    if (store && store.subscriptionPlan && !isTenantApproved(store)) {
         const plan = store.subscriptionPlan as any;
         const currentCount = await User.countDocuments({ storeId: req.tenantId });
         if (plan.maxUsers !== 0 && currentCount >= plan.maxUsers) {

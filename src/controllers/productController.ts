@@ -15,6 +15,7 @@ import Store from '../models/Store.js';
 import webhookService from '../services/webhookService.js';
 import Category from '../models/Category.js';
 import { emitToStore } from '../config/socket.js';
+import { isTenantApproved } from '../middleware/usageLimits.js';
 
 // @desc    Get all products for a tenant
 // @route   GET /api/products
@@ -141,7 +142,7 @@ export const getProductById = asyncHandler(async (req: TenantRequest, res: Respo
 export const createProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
     // Check Plan Limits
     const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
-    if (store && store.subscriptionPlan) {
+    if (store && store.subscriptionPlan && !isTenantApproved(store)) {
         const plan = store.subscriptionPlan as any;
         const currentCount = await Product.countDocuments({ storeId: req.tenantId });
         if (plan.maxProducts !== 0 && currentCount >= plan.maxProducts) {
