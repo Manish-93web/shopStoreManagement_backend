@@ -163,6 +163,10 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
         const generateBarcode = customAlphabet('0123456789', 12);
         productData.barcode = generateBarcode();
     }
+    // SKU is optional on the form — derive one from the (unique per store) barcode when left blank.
+    if (!productData.sku || !String(productData.sku).trim()) {
+        productData.sku = `SKU-${productData.barcode}`;
+    }
     const product = await Product.create(productData);
     if (process.env.SKIP_REDIS !== 'true') {
         await bumpCacheVersion(req.tenantId!.toString());
