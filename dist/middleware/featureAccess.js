@@ -1,5 +1,6 @@
 import Store from '../models/Store.js';
 import Plan from '../models/Plan.js';
+import { isTenantApproved } from './usageLimits.js';
 import ApiResponse from '../utils/apiResponse.js';
 /**
  * Middleware to check if a store has access to a specific feature based on their plan or direct enablement.
@@ -19,6 +20,9 @@ export const checkFeatureAccess = (featureName) => {
         if (!store) {
             return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
         }
+        // Super Admin–approved tenants get every feature without plan gating.
+        if (isTenantApproved(store))
+            return next();
         // A store with no plan assigned (registered before the Free-plan-on-signup
         // logic existed, or a plan that was later deleted) should default to the
         // Free tier's features rather than being locked out of everything.

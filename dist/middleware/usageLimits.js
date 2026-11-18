@@ -3,6 +3,9 @@ import Product from '../models/Product.js';
 import Order from '../models/Order.js';
 import User from '../models/User.js';
 import ApiResponse from '../utils/apiResponse.js';
+// Once a Super Admin has approved a tenant (and it is active), plan resource limits no
+// longer apply to it — the Super Admin manages what that tenant gets from the dashboard.
+export const isTenantApproved = (store) => !!store && store.status === 'Approved' && store.isActive !== false;
 export const checkUsageLimits = (resource) => {
     return async (req, res, next) => {
         const tenantId = req.tenantId;
@@ -15,6 +18,8 @@ export const checkUsageLimits = (resource) => {
         const store = await Store.findById(tenantId).populate('subscriptionPlan');
         if (!store)
             return next();
+        if (isTenantApproved(store))
+            return next();
         // If no plan is assigned, fallback to "Free" logic or a default plan
         let limits = { orders: 50, products: 20, maxStores: 1, maxUsers: 2 };
         if (store.subscriptionPlan) {
@@ -23,7 +28,7 @@ export const checkUsageLimits = (resource) => {
                 orders: plan.maxOrders || 100, // Assuming maxOrders might be added, or use features
                 products: plan.maxProducts,
                 maxStores: plan.maxStores,
-                maxUsers: plan.maxUsers
+                maxUsers: plan.maxUsers,
             };
         }
         let limit = Infinity;
@@ -49,7 +54,9 @@ export const checkUsageLimits = (resource) => {
             currentCount = await Order.countDocuments({ storeId: tenantId, createdAt: { $gte: startOfMonth } });
         }
         if (currentCount >= limit) {
-            return res.status(403).json(new ApiResponse(403, null, `Resource limit reached for your plan. Please upgrade to add more ${resource.toLowerCase()}s.`));
+            return res
+                .status(403)
+                .json(new ApiResponse(403, null, `Resource limit reached for your plan. Please upgrade to add more ${resource.toLowerCase()}s.`));
         }
         next();
     };
@@ -66,10 +73,14 @@ export const checkTrialExpiry = async (req, res, next) => {
     if (!store)
         return next();
     if (!store.isActive || store.subscriptionStatus === 'Cancelled' || store.subscriptionStatus === 'Past Due') {
-        return res.status(403).json(new ApiResponse(403, null, "Your subscription is inactive or past due. Please update payment."));
+        return res
+            .status(403)
+            .json(new ApiResponse(403, null, 'Your subscription is inactive or past due. Please update payment.'));
     }
     if (store.subscriptionStatus === 'Trialing' && store.trialEndsAt && new Date() > store.trialEndsAt) {
-        return res.status(403).json(new ApiResponse(403, null, "Your trial has expired. Please upgrade to a paid plan to continue."));
+        return res
+            .status(403)
+            .json(new ApiResponse(403, null, 'Your trial has expired. Please upgrade to a paid plan to continue.'));
     }
     next();
 };

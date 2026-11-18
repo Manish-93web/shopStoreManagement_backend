@@ -13,6 +13,7 @@ import Store from '../models/Store.js';
 import webhookService from '../services/webhookService.js';
 import Category from '../models/Category.js';
 import { emitToStore } from '../config/socket.js';
+import { isTenantApproved } from '../middleware/usageLimits.js';
 // @desc    Get all products for a tenant
 // @route   GET /api/products
 export const getProducts = asyncHandler(async (req, res) => {
@@ -124,7 +125,7 @@ export const getProductById = asyncHandler(async (req, res) => {
 export const createProduct = asyncHandler(async (req, res) => {
     // Check Plan Limits
     const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
-    if (store && store.subscriptionPlan) {
+    if (store && store.subscriptionPlan && !isTenantApproved(store)) {
         const plan = store.subscriptionPlan;
         const currentCount = await Product.countDocuments({ storeId: req.tenantId });
         if (plan.maxProducts !== 0 && currentCount >= plan.maxProducts) {
@@ -137,6 +138,10 @@ export const createProduct = asyncHandler(async (req, res) => {
     if (!productData.barcode) {
         const generateBarcode = customAlphabet('0123456789', 12);
         productData.barcode = generateBarcode();
+    }
+    // SKU is optional on the form — derive one from the (unique per store) barcode when left blank.
+    if (!productData.sku || !String(productData.sku).trim()) {
+        productData.sku = `SKU-${productData.barcode}`;
     }
     const product = await Product.create(productData);
     if (process.env.SKIP_REDIS !== 'true') {
