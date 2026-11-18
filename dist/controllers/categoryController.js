@@ -1,4 +1,5 @@
 import Category from '../models/Category.js';
+import Product from '../models/Product.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 // @desc    Get all categories for a store
@@ -59,9 +60,16 @@ export const updateCategory = asyncHandler(async (req, res) => {
 // @route   DELETE /api/categories/:id
 // @access  Private (Owner/Manager)
 export const deleteCategory = asyncHandler(async (req, res) => {
+    if (await Category.exists({ parentId: req.params.id, storeId: req.tenantId })) {
+        return res
+            .status(400)
+            .json(new ApiResponse(400, null, 'Delete or move the sub-categories of this category first'));
+    }
     const category = await Category.findOneAndDelete({ _id: req.params.id, storeId: req.tenantId });
     if (!category) {
         return res.status(404).json(new ApiResponse(404, null, "Category not found"));
     }
+    // Products that used it as their sub-category simply lose that sub-category.
+    await Product.updateMany({ storeId: req.tenantId, subCategory: category._id }, { $unset: { subCategory: 1 } });
     res.status(200).json(new ApiResponse(200, null, "Category deleted successfully"));
 });

@@ -17,6 +17,16 @@ import Category from '../models/Category.js';
 import { emitToStore } from '../config/socket.js';
 import { isTenantApproved } from '../middleware/usageLimits.js';
 
+// A product's sub-category must be a child of the category chosen for it.
+const subCategoryBelongsToCategory = async (
+    tenantId: mongoose.Types.ObjectId | string | undefined,
+    categoryId: string,
+    subCategoryId: string
+): Promise<boolean> => {
+    if (!mongoose.isValidObjectId(categoryId) || !mongoose.isValidObjectId(subCategoryId)) return false;
+    return !!(await Category.exists({ _id: subCategoryId, parentId: categoryId, storeId: tenantId }));
+};
+
 // @desc    Get all products for a tenant
 // @route   GET /api/products
 export const getProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
@@ -76,6 +86,7 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
 
     const products = await Product.find(query)
         .populate('category')
+        .populate('subCategory')
         .populate('taxRule')
         .skip(skip)
         .limit(limit)
@@ -120,6 +131,7 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
 export const getProductById = asyncHandler(async (req: TenantRequest, res: Response) => {
     const product = await Product.findOne({ _id: req.params.id, storeId: req.tenantId })
         .populate('category')
+        .populate('subCategory')
         .populate('taxRule');
     if (!product) {
         return res.status(404).json(new ApiResponse(404, null, 'Product not found'));
@@ -159,6 +171,12 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
     }
 
     const productData = { ...req.body, storeId: req.tenantId };
+    if (!productData.subCategory) delete productData.subCategory;
+    else if (!(await subCategoryBelongsToCategory(req.tenantId, productData.category, productData.subCategory))) {
+        return res
+            .status(400)
+            .json(new ApiResponse(400, null, 'The sub-category does not belong to the selected category'));
+    }
     if (!productData.barcode) {
         const generateBarcode = customAlphabet('0123456789', 12);
         productData.barcode = generateBarcode();
@@ -197,8 +215,19 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
 // @desc    Update product
 // @route   PUT /api/products/:id
 export const updateProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const existing = await Product.findOne({ _id: req.params.id, storeId: req.tenantId }).select('price');
+    const existing = await Product.findOne({ _id: req.params.id, storeId: req.tenantId }).select('price category');
     if (!existing) return res.status(404).json(new ApiResponse(404, null, 'Product not found'));
+
+    // An empty sub-category clears it; a real one must be a child of the (new or current) category.
+    if (req.body.subCategory === '') req.body.subCategory = null;
+    if (req.body.subCategory) {
+        const categoryId = String(req.body.category || existing.category);
+        if (!(await subCategoryBelongsToCategory(req.tenantId, categoryId, req.body.subCategory))) {
+            return res
+                .status(400)
+                .json(new ApiResponse(400, null, 'The sub-category does not belong to the selected category'));
+        }
+    }
 
     const product = await Product.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, {
         returnDocument: 'after',

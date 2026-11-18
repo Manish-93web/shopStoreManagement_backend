@@ -10,10 +10,12 @@ export interface IProduct extends Document {
     sku: string;
     barcode: string;
     category: mongoose.Types.ObjectId;
+    subCategory?: mongoose.Types.ObjectId; // A child of `category`
     brand?: mongoose.Types.ObjectId; // Changed to ref
     description?: string;
     price: number;
     costPrice: number;
+    mrp?: number; // Maximum retail price printed on the product
     taxRate: number;
     taxRule?: mongoose.Types.ObjectId; // Optional reusable tax category; falls back to the flat taxRate above when unset
     hsnCode?: string;
@@ -30,10 +32,12 @@ const ProductSchema: Schema = new Schema(
         sku: { type: String, required: true },
         barcode: { type: String, required: true },
         category: { type: Schema.Types.ObjectId, ref: 'Category', required: true },
+        subCategory: { type: Schema.Types.ObjectId, ref: 'Category' },
         brand: { type: Schema.Types.ObjectId, ref: 'Brand' },
         description: { type: String },
         price: { type: Number, required: true },
         costPrice: { type: Number, required: true },
+        mrp: { type: Number },
         taxRate: { type: Number, default: 0 },
         taxRule: { type: Schema.Types.ObjectId, ref: 'TaxRule' },
         hsnCode: { type: String },
