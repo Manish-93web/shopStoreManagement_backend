@@ -1,6 +1,7 @@
 import dayjs from 'dayjs';
 import Store from '../models/Store.js';
 import { notificationService } from '../services/notificationService.js';
+import { planDurationDays } from '../utils/planDuration.js';
 
 // Billing was entirely manual — a store owner had to remember to come back
 // and re-checkout every cycle, with nothing happening automatically once a
@@ -17,10 +18,6 @@ import { notificationService } from '../services/notificationService.js';
 // once the grace period after the renewal date passes.
 const GRACE_DAYS_BEFORE_PAST_DUE = 3;
 
-function cycleDays(billingCycle: 'monthly' | 'yearly'): number {
-    return billingCycle === 'yearly' ? 365 : 30;
-}
-
 export const runSubscriptionRenewalCheck = async () => {
     const now = dayjs();
 
@@ -36,7 +33,7 @@ export const runSubscriptionRenewalCheck = async () => {
             const plan = store.subscriptionPlan as any;
             if (!plan || !plan.price || plan.price <= 0) continue; // free plan — nothing to renew
 
-            const renewalDue = dayjs(store.lastBillingDate).add(cycleDays(plan.billingCycle), 'day');
+            const renewalDue = dayjs(store.lastBillingDate).add(planDurationDays(plan.billingCycle), 'day');
             if (now.isBefore(renewalDue)) continue;
 
             const daysPastDue = now.diff(renewalDue, 'day');

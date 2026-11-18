@@ -4,6 +4,9 @@ import Order from '../models/Order.js';
 import User from '../models/User.js';
 import AuditLog from '../models/AuditLog.js';
 import Product from '../models/Product.js';
+import SubscriptionPayment from '../models/SubscriptionPayment.js';
+import SubscriptionInvoice from '../models/SubscriptionInvoice.js';
+import { BILLING_CYCLES, PLAN_LABELS, planDurationDays } from '../utils/planDuration.js';
 import Plan from '../models/Plan.js';
 import Customer from '../models/Customer.js';
 import dayjs from 'dayjs';
@@ -19,18 +22,37 @@ export const getSystemStats = asyncHandler(async (req, res) => {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
-    const [totalStores, totalOrders, totalUsers, stores, aggregateRevenue, monthlyRevenue] = await Promise.all([
+    const [totalStores, totalOrders, totalUsers, stores, aggregateRevenue, monthlyRevenue, planBreakdown] = await Promise.all([
         Store.countDocuments(),
         Order.countDocuments(),
         User.countDocuments(),
         Store.find().populate('subscriptionPlan').limit(10).sort({ createdAt: -1 }),
-        Order.aggregate([
+        // The platform's own revenue is what tenants pay for their subscriptions — never the
+        // sales the tenants make to their own customers.
+        SubscriptionPayment.aggregate([
             { $match: { status: 'Completed' } },
-            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
+            { $group: { _id: null, total: { $sum: '$amount' } } },
         ]),
-        Order.aggregate([
+        SubscriptionPayment.aggregate([
             { $match: { status: 'Completed', createdAt: { $gte: startOfMonth } } },
-            { $group: { _id: null, total: { $sum: '$grandTotal' } } },
+            { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]),
+        // Revenue per plan (7-day trial, 1 month, 3 months ...) from paid subscription invoices.
+        SubscriptionInvoice.aggregate([
+            { $match: { status: 'Paid' } },
+            { $group: { _id: '$plan', revenue: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+            { $lookup: { from: 'plans', localField: '_id', foreignField: '_id', as: 'plan' } },
+            { $unwind: { path: '$plan', preserveNullAndEmptyArrays: true } },
+            {
+                $project: {
+                    _id: 0,
+                    name: { $ifNull: ['$plan.name', 'Removed plan'] },
+                    billingCycle: '$plan.billingCycle',
+                    revenue: 1,
+                    count: 1,
+                },
+            },
+            { $sort: { revenue: -1 } },
         ]),
     ]);
     res.status(200).json(new ApiResponse(200, {
@@ -39,6 +61,7 @@ export const getSystemStats = asyncHandler(async (req, res) => {
         totalUsers,
         totalRevenue: aggregateRevenue[0]?.total || 0,
         monthlyRevenue: monthlyRevenue[0]?.total || 0,
+        planBreakdown,
         recentStores: stores,
     }));
 });
@@ -51,9 +74,19 @@ export const getAllStores = asyncHandler(async (req, res) => {
         query.name = { $regex: search, $options: 'i' };
     // Store.status is the Pending/Approved/Suspended lifecycle field shown as the
     // "Status" badge on the tenants table — the most useful single filter here.
-    if (status)
+    // "Trial" is an approved tenant that is still on its trial.
+    if (status === 'Trial') {
+        query.status = 'Approved';
+        query.subscriptionStatus = 'Trialing';
+    }
+    else if (status)
         query.status = status;
-    if (plan && mongoose.Types.ObjectId.isValid(plan))
+    if (plan && BILLING_CYCLES.includes(plan)) {
+        // The plan filter lists the durations (7 Days Trial, 1 Month ... 2 Years).
+        const ids = await Plan.find({ billingCycle: plan }).distinct('_id');
+        query.subscriptionPlan = { $in: ids };
+    }
+    else if (plan && mongoose.Types.ObjectId.isValid(plan))
         query.subscriptionPlan = plan;
     const stores = await Store.find(query)
         .populate('owner', 'name email phone')
@@ -138,30 +171,105 @@ export const toggleStoreStatus = asyncHandler(async (req, res) => {
 // @desc    Change a tenant's subscription plan (upgrade/downgrade) without checkout
 // @route   PUT /api/v1/super-admin/stores/:id/plan
 export const changeStorePlan = asyncHandler(async (req, res) => {
-    const { planId } = req.body;
-    if (!planId || !mongoose.Types.ObjectId.isValid(planId)) {
-        return res.status(400).json(new ApiResponse(400, null, 'A valid planId is required'));
+    // The Super Admin picks a duration (7-day trial ... 2 years) and types the amount for this
+    // tenant. `planId` is still accepted for older clients.
+    const { planId, duration } = req.body;
+    const hasDuration = duration !== undefined && duration !== null && duration !== '';
+    if (hasDuration && !BILLING_CYCLES.includes(duration)) {
+        return res.status(400).json(new ApiResponse(400, null, 'Choose a valid plan duration'));
     }
-    const [store, plan] = await Promise.all([
-        Store.findById(req.params.id).populate('subscriptionPlan'),
-        Plan.findById(planId),
-    ]);
+    if (!hasDuration && (!planId || !mongoose.Types.ObjectId.isValid(planId))) {
+        return res.status(400).json(new ApiResponse(400, null, 'A plan duration is required'));
+    }
+    const typedAmount = Number(req.body.amount);
+    if (hasDuration && (req.body.amount === undefined || req.body.amount === '' || !(typedAmount >= 0))) {
+        return res.status(400).json(new ApiResponse(400, null, 'Enter the amount for this plan'));
+    }
+    const store = await Store.findById(req.params.id).populate('subscriptionPlan');
     if (!store)
         return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
-    if (!plan)
-        return res.status(404).json(new ApiResponse(404, null, 'Plan not found'));
+    let plan;
+    if (hasDuration) {
+        // One hidden plan per duration carries the label; the price is the amount typed for this tenant.
+        const cycle = duration;
+        plan = await Plan.findOne({ name: PLAN_LABELS[cycle], billingCycle: cycle });
+        if (!plan) {
+            plan = await Plan.create({
+                name: PLAN_LABELS[cycle],
+                price: 0,
+                billingCycle: cycle,
+                maxUsers: 0,
+                maxStores: 0,
+                maxProducts: 0,
+                features: [
+                    'POS Access',
+                    'Inventory Management',
+                    'Basic Analytics',
+                    'Advanced Finance',
+                    'AI Predictions',
+                    'White-labeling',
+                ],
+                isActive: false, // not offered for self-service checkout
+            });
+        }
+    }
+    else {
+        plan = await Plan.findById(planId);
+        if (!plan)
+            return res.status(404).json(new ApiResponse(404, null, 'Plan not found'));
+    }
+    const amount = hasDuration ? typedAmount : plan.price;
     const oldName = store.subscriptionPlan?.name || 'Trial';
+    const now = new Date();
     store.subscriptionPlan = plan._id;
-    store.subscriptionStatus = 'Active';
-    store.lastBillingDate = new Date();
+    if (plan.billingCycle === 'trial') {
+        store.subscriptionStatus = 'Trialing';
+        store.trialEndsAt = dayjs(now).add(planDurationDays(plan.billingCycle), 'day').toDate();
+    }
+    else {
+        store.subscriptionStatus = 'Active';
+    }
+    store.lastBillingDate = now;
+    // Setting a plan for a tenant also makes it Active and Approved.
+    store.status = 'Approved';
+    store.isActive = true;
     await store.save();
+    // A plan the Super Admin sets up (e.g. after taking payment offline) counts as platform
+    // revenue, so it shows on the Super Admin dashboard like any other subscription payment.
+    if (amount > 0) {
+        const periodEnd = dayjs(now).add(planDurationDays(plan.billingCycle), 'day').toDate();
+        const invoice = await SubscriptionInvoice.create({
+            invoiceNumber: `INV-${Date.now()}`,
+            storeId: store._id,
+            ownerId: store.owner,
+            plan: plan._id,
+            amount,
+            taxAmount: 0,
+            totalAmount: amount,
+            currency: 'INR',
+            status: 'Paid',
+            dueDate: now,
+            paidAt: now,
+            billingPeriod: { start: now, end: periodEnd },
+        });
+        await SubscriptionPayment.create({
+            transactionId: `MANUAL-${Date.now()}-${store._id}`,
+            invoiceId: invoice._id,
+            storeId: store._id,
+            amount,
+            currency: 'INR',
+            gateway: 'Manual',
+            status: 'Completed',
+            paymentMethod: 'manual',
+        });
+    }
     await AuditLog.create({
         userId: req.user?._id,
         storeId: store._id,
         action: 'PLAN_CHANGED',
         entity: 'Store',
         entityId: store._id,
-        details: `Super admin changed plan from ${oldName} to ${plan.name}`,
+        details: `Super admin changed plan from ${oldName} to ${plan.name} (₹${amount})`,
     });
     await notificationService
         .send({
@@ -179,12 +287,16 @@ export const changeStorePlan = asyncHandler(async (req, res) => {
 // @route   PUT /api/v1/super-admin/stores/:id/approve
 export const approveStore = asyncHandler(async (req, res) => {
     const { approve } = req.body;
-    const store = await Store.findById(req.params.id);
+    const store = await Store.findById(req.params.id).populate('subscriptionPlan');
     if (!store)
         return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
     if (approve) {
         store.status = 'Approved';
         store.isActive = true;
+        // An approved tenant has full access; only the 7-day trial plan (set via Change Plan) is limited.
+        if (store.subscriptionStatus === 'Trialing' && store.subscriptionPlan?.billingCycle !== 'trial') {
+            store.subscriptionStatus = 'Active';
+        }
     }
     else {
         // Rejection could delete or just mark as suspended/rejected

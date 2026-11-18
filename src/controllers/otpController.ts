@@ -7,6 +7,8 @@ import jwt from 'jsonwebtoken';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt.js';
 import AuditLog from '../models/AuditLog.js';
 import { sendSMS } from '../utils/smsService.js';
+import { signInBlockedStatus } from '../utils/accountAccess.js';
+import { INACTIVE_ACCOUNT_MESSAGE } from '../middleware/usageLimits.js';
 
 // @desc    Send OTP to phone
 // @route   POST /api/v1/auth/send-otp
@@ -76,6 +78,10 @@ export const verifyOTP = asyncHandler(async (req: Request, res: Response) => {
     await OTP.deleteOne({ _id: otpRecord._id });
 
     // Generate JWTs
+    if (await signInBlockedStatus(user)) {
+        return res.status(403).json(new ApiResponse(403, null, INACTIVE_ACCOUNT_MESSAGE));
+    }
+
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
 

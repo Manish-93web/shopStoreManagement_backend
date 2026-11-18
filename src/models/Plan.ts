@@ -1,9 +1,10 @@
 import mongoose, { Schema, Document } from 'mongoose';
+import { BILLING_CYCLES, BillingCycle } from '../utils/planDuration.js';
 
 export interface IPlan extends Document {
     name: string;
     price: number;
-    billingCycle: 'monthly' | 'yearly';
+    billingCycle: BillingCycle; // trial (7 days), monthly, quarterly, halfyearly, yearly or biennial
     features: string[];
     maxUsers: number;
     maxStores: number;
@@ -11,15 +12,18 @@ export interface IPlan extends Document {
     isActive: boolean;
 }
 
-const PlanSchema: Schema = new Schema({
-    name: { type: String, required: true, unique: true },
-    price: { type: Number, required: true },
-    billingCycle: { type: String, enum: ['monthly', 'yearly'], default: 'monthly' },
-    features: [{ type: String }],
-    maxUsers: { type: Number, default: 5 },
-    maxStores: { type: Number, default: 1 },
-    maxProducts: { type: Number, default: 100 },
-    isActive: { type: Boolean, default: true },
-}, { timestamps: true });
+const PlanSchema: Schema = new Schema(
+    {
+        name: { type: String, required: true, unique: true },
+        price: { type: Number, required: true },
+        billingCycle: { type: String, enum: BILLING_CYCLES, default: 'monthly' },
+        features: [{ type: String }],
+        maxUsers: { type: Number, default: 5 },
+        maxStores: { type: Number, default: 1 },
+        maxProducts: { type: Number, default: 100 },
+        isActive: { type: Boolean, default: true },
+    },
+    { timestamps: true }
+);
 
 export default mongoose.model<IPlan>('Plan', PlanSchema);

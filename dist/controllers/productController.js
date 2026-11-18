@@ -13,7 +13,7 @@ import Store from '../models/Store.js';
 import webhookService from '../services/webhookService.js';
 import Category from '../models/Category.js';
 import { emitToStore } from '../config/socket.js';
-import { isTenantApproved } from '../middleware/usageLimits.js';
+import { isTenantApproved, isTrialTenant, TRIAL_PRODUCT_LIMIT, trialProductLimitMessage, } from '../middleware/usageLimits.js';
 // A product's sub-category must be a child of the category chosen for it.
 const subCategoryBelongsToCategory = async (tenantId, categoryId, subCategoryId) => {
     if (!mongoose.isValidObjectId(categoryId) || !mongoose.isValidObjectId(subCategoryId))
@@ -133,7 +133,13 @@ export const getProductById = asyncHandler(async (req, res) => {
 export const createProduct = asyncHandler(async (req, res) => {
     // Check Plan Limits
     const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
-    if (store && store.subscriptionPlan && !isTenantApproved(store)) {
+    if (store && isTrialTenant(store)) {
+        const trialCount = await Product.countDocuments({ storeId: req.tenantId });
+        if (trialCount >= TRIAL_PRODUCT_LIMIT) {
+            return res.status(403).json(new ApiResponse(403, null, trialProductLimitMessage));
+        }
+    }
+    else if (store && store.subscriptionPlan && !isTenantApproved(store)) {
         const plan = store.subscriptionPlan;
         const currentCount = await Product.countDocuments({ storeId: req.tenantId });
         if (plan.maxProducts !== 0 && currentCount >= plan.maxProducts) {
@@ -356,7 +362,11 @@ export const bulkImportProducts = asyncHandler(async (req, res) => {
     const store = await Store.findById(req.tenantId).populate('subscriptionPlan');
     let maxProducts = 0;
     let currentCount = 0;
-    if (store && store.subscriptionPlan) {
+    if (store && isTrialTenant(store)) {
+        maxProducts = TRIAL_PRODUCT_LIMIT;
+        currentCount = await Product.countDocuments({ storeId: req.tenantId });
+    }
+    else if (store && store.subscriptionPlan && !isTenantApproved(store)) {
         const plan = store.subscriptionPlan;
         maxProducts = plan.maxProducts;
         currentCount = await Product.countDocuments({ storeId: req.tenantId });

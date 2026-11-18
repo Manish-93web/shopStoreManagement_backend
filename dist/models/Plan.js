@@ -1,8 +1,9 @@
 import mongoose, { Schema } from 'mongoose';
+import { BILLING_CYCLES } from '../utils/planDuration.js';
 const PlanSchema = new Schema({
     name: { type: String, required: true, unique: true },
     price: { type: Number, required: true },
-    billingCycle: { type: String, enum: ['monthly', 'yearly'], default: 'monthly' },
+    billingCycle: { type: String, enum: BILLING_CYCLES, default: 'monthly' },
     features: [{ type: String }],
     maxUsers: { type: Number, default: 5 },
     maxStores: { type: Number, default: 1 },

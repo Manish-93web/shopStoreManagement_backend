@@ -11,10 +11,10 @@ export const getCategories = asyncHandler(async (req, res) => {
     if (tree === 'true') {
         const categoryMap = new Map();
         const roots = [];
-        categories.forEach(cat => {
+        categories.forEach((cat) => {
             categoryMap.set(cat._id.toString(), { ...cat, children: [] });
         });
-        categories.forEach(cat => {
+        categories.forEach((cat) => {
             const node = categoryMap.get(cat._id.toString());
             if (cat.parentId) {
                 const parent = categoryMap.get(cat.parentId.toString());
@@ -42,19 +42,21 @@ export const createCategory = asyncHandler(async (req, res) => {
         name,
         description,
         parentId: parentId || undefined,
-        storeId: req.tenantId
+        storeId: req.tenantId,
     });
-    res.status(201).json(new ApiResponse(201, category, "Category created successfully"));
+    res.status(201).json(new ApiResponse(201, category, 'Category created successfully'));
 });
 // @desc    Update category
 // @route   PUT /api/categories/:id
 // @access  Private (Owner/Manager)
 export const updateCategory = asyncHandler(async (req, res) => {
-    const category = await Category.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, { returnDocument: 'after' });
+    const category = await Category.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, {
+        returnDocument: 'after',
+    });
     if (!category) {
-        return res.status(404).json(new ApiResponse(404, null, "Category not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Category not found'));
     }
-    res.status(200).json(new ApiResponse(200, category, "Category updated successfully"));
+    res.status(200).json(new ApiResponse(200, category, 'Category updated successfully'));
 });
 // @desc    Delete category
 // @route   DELETE /api/categories/:id
@@ -67,9 +69,9 @@ export const deleteCategory = asyncHandler(async (req, res) => {
     }
     const category = await Category.findOneAndDelete({ _id: req.params.id, storeId: req.tenantId });
     if (!category) {
-        return res.status(404).json(new ApiResponse(404, null, "Category not found"));
+        return res.status(404).json(new ApiResponse(404, null, 'Category not found'));
     }
     // Products that used it as their sub-category simply lose that sub-category.
     await Product.updateMany({ storeId: req.tenantId, subCategory: category._id }, { $unset: { subCategory: 1 } });
-    res.status(200).json(new ApiResponse(200, null, "Category deleted successfully"));
+    res.status(200).json(new ApiResponse(200, null, 'Category deleted successfully'));
 });

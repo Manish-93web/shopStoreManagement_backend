@@ -12,6 +12,15 @@ import ApiResponse from '../utils/apiResponse.js';
 export const isTenantApproved = (store: { status?: string; isActive?: boolean } | null | undefined): boolean =>
     !!store && store.status === 'Approved' && store.isActive !== false;
 
+// An approved tenant that is still on the trial can use everything, but only add a few products.
+export const TRIAL_PRODUCT_LIMIT = 10;
+export const isTrialTenant = (
+    store: { status?: string; isActive?: boolean; subscriptionStatus?: string } | null | undefined
+): boolean => isTenantApproved(store) && store!.subscriptionStatus === 'Trialing';
+
+export const INACTIVE_ACCOUNT_MESSAGE = 'Your account is not active. Please contact Administration.';
+export const trialProductLimitMessage = `Trial accounts can add up to ${TRIAL_PRODUCT_LIMIT} products. Please contact Administration to activate your plan.`;
+
 export const checkUsageLimits = (resource: 'STORE' | 'PRODUCT' | 'USER' | 'ORDER') => {
     return async (req: TenantRequest, res: Response, next: NextFunction) => {
         const tenantId = req.tenantId;
@@ -25,6 +34,14 @@ export const checkUsageLimits = (resource: 'STORE' | 'PRODUCT' | 'USER' | 'ORDER
         const store = await Store.findById(tenantId).populate('subscriptionPlan');
         if (!store) return next();
 
+        if (isTrialTenant(store)) {
+            if (resource !== 'PRODUCT') return next();
+            const count = await Product.countDocuments({ storeId: tenantId });
+            if (count >= TRIAL_PRODUCT_LIMIT) {
+                return res.status(403).json(new ApiResponse(403, null, trialProductLimitMessage));
+            }
+            return next();
+        }
         if (isTenantApproved(store)) return next();
 
         // If no plan is assigned, fallback to "Free" logic or a default plan
@@ -61,7 +78,8 @@ export const checkUsageLimits = (resource: 'STORE' | 'PRODUCT' | 'USER' | 'ORDER
             currentCount = await Order.countDocuments({ storeId: tenantId, createdAt: { $gte: startOfMonth } });
         }
 
-        if (currentCount >= limit) {
+        // A limit of 0 means unlimited on a plan (as in the Plans form: 0 for Unlimited).
+        if (limit !== 0 && currentCount >= limit) {
             return res
                 .status(403)
                 .json(
@@ -88,6 +106,11 @@ export const checkTrialExpiry = async (req: TenantRequest, res: Response, next: 
 
     const store = await Store.findById(tenantId);
     if (!store) return next();
+
+    // Pending (not yet approved) and Suspended tenants are locked out until Administration acts.
+    if (store.status === 'Pending' || store.status === 'Suspended') {
+        return res.status(403).json(new ApiResponse(403, null, INACTIVE_ACCOUNT_MESSAGE));
+    }
 
     if (!store.isActive || store.subscriptionStatus === 'Cancelled' || store.subscriptionStatus === 'Past Due') {
         return res

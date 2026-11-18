@@ -1,3 +1,5 @@
+import { INACTIVE_ACCOUNT_MESSAGE } from '../middleware/usageLimits.js';
+import { signInBlockedStatus } from '../utils/accountAccess.js';
 import { Request, Response } from 'express';
 import User, { UserRole } from '../models/User.js';
 import Store from '../models/Store.js';
@@ -53,12 +55,8 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     user.storeId = store._id as any;
     await user.save();
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    user.refreshToken = refreshToken;
-    await user.save();
-
+    // No tokens here: a new store is Pending until Administration approves it, so the owner
+    // is not signed in automatically.
     // Create Audit Log
     await logAudit({
         req,
@@ -80,10 +78,8 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
                     role: user.role,
                     storeId: user.storeId,
                 },
-                accessToken,
-                refreshToken,
             },
-            'Store registered successfully'
+            'Store registered successfully. It will be activated once Administration approves it.'
         )
     );
 });
@@ -92,9 +88,12 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 // @route   POST /api/auth/login
 // @access  Public
 export const login = asyncHandler(async (req: Request, res: Response) => {
-    const { email, password } = req.body;
+    // Sign in with the email address or the registered mobile number (older clients send `email`).
+    const { email, identifier, password } = req.body;
+    const login = String(identifier ?? email ?? '').trim();
+    const query = login.includes('@') ? { email: login } : { phone: login.replace(/\D/g, '').slice(-10) };
 
-    const user = await User.findOne({ email }).select('+password');
+    const user = login && password ? await User.findOne(query).select('+password') : null;
     if (!user || !(await user.comparePassword(password))) {
         await logAudit({
             req,
@@ -102,9 +101,23 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
             userId: user?._id || null,
             action: 'LOGIN_FAILURE',
             entity: 'User',
-            details: `Failed login attempt for email: ${email}`,
+            details: `Failed login attempt for: ${login}`,
         });
         return res.status(401).json(new ApiResponse(401, null, 'Invalid credentials'));
+    }
+
+    // Pending and Suspended tenants cannot sign in.
+    const blockedStatus = await signInBlockedStatus(user);
+    if (blockedStatus) {
+        await logAudit({
+            req,
+            storeId: user.storeId || (user.stores && user.stores[0]),
+            userId: user._id,
+            action: 'LOGIN_FAILURE',
+            entity: 'User',
+            details: `Sign-in blocked: store is ${blockedStatus}`,
+        });
+        return res.status(403).json(new ApiResponse(403, null, INACTIVE_ACCOUNT_MESSAGE));
     }
 
     const accessToken = generateAccessToken(user);

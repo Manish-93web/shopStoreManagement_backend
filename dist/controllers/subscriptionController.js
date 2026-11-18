@@ -2,6 +2,7 @@ import Razorpay from 'razorpay';
 import dayjs from 'dayjs';
 import Store from '../models/Store.js';
 import Plan from '../models/Plan.js';
+import { planDurationDays } from '../utils/planDuration.js';
 import SubscriptionInvoice from '../models/SubscriptionInvoice.js';
 import SubscriptionPayment from '../models/SubscriptionPayment.js';
 import ApiResponse from '../utils/apiResponse.js';
@@ -64,8 +65,13 @@ export const subscriptionController = {
         const store = await Store.findByIdAndUpdate(req.tenantId, {
             $set: {
                 subscriptionPlan: plan._id,
-                subscriptionStatus: 'Active',
                 lastBillingDate: new Date(),
+                ...(plan.billingCycle === 'trial'
+                    ? {
+                        subscriptionStatus: 'Trialing',
+                        trialEndsAt: new Date(Date.now() + planDurationDays('trial') * 86400000),
+                    }
+                    : { subscriptionStatus: 'Active' }),
             },
         }, { returnDocument: 'after' });
         res.status(200).json(new ApiResponse(200, store, 'Subscription updated'));
@@ -95,7 +101,7 @@ export const subscriptionController = {
             return res.status(404).json(new ApiResponse(404, null, 'Store not found'));
         const now = new Date();
         const billingEnd = new Date(now);
-        billingEnd.setDate(billingEnd.getDate() + (plan.billingCycle === 'yearly' ? 365 : 30));
+        billingEnd.setDate(billingEnd.getDate() + planDurationDays(plan.billingCycle));
         const invoice = await SubscriptionInvoice.create({
             invoiceNumber: `INV-${Date.now()}`,
             storeId: store._id,
