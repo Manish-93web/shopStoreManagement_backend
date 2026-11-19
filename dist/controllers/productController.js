@@ -140,7 +140,25 @@ export const getProducts = asyncHandler(async (req, res) => {
         .lean();
     const productIds = products.map((p) => p._id);
     const inventories = await Inventory.find({ product: { $in: productIds }, store: req.tenantId });
-    const inventoryMap = new Map(inventories.map((inv) => [inv.product.toString(), inv]));
+    // The base product's own row, and (for products with variants) the stock of each size / colour.
+    const inventoryMap = new Map(inventories.filter((inv) => !inv.variant).map((inv) => [inv.product.toString(), inv]));
+    const variantStock = new Map(inventories.filter((inv) => inv.variant).map((inv) => [inv.variant.toString(), inv.quantity]));
+    const variantRows = await ProductVariant.find({
+        productId: { $in: products.filter((p) => p.hasVariants).map((p) => p._id) },
+        storeId: req.tenantId,
+        isActive: { $ne: false },
+    })
+        .select('name sku productId')
+        .sort({ name: 1 })
+        .lean();
+    const variantsByProduct = new Map();
+    for (const v of variantRows) {
+        const key = v.productId.toString();
+        variantsByProduct.set(key, [
+            ...(variantsByProduct.get(key) || []),
+            { _id: v._id, name: v.name, sku: v.sku, stock: variantStock.get(v._id.toString()) ?? 0 },
+        ]);
+    }
     // Batch-tracked products show their nearest expiry; a combo shows how many bundles its components allow.
     const batchProductIds = products.filter((p) => p.trackBatch).map((p) => p._id);
     const expiryRows = batchProductIds.length
@@ -169,9 +187,16 @@ export const getProducts = asyncHandler(async (req, res) => {
     const productsWithInventory = products.map((p) => ({
         ...p,
         nearestExpiry: expiryByProduct.get(p._id.toString()),
+        variants: variantsByProduct.get(p._id.toString()) || [],
+        // A product with sizes / colours has its stock on the variants: show their total.
         inventory: p.isCombo
             ? { ...(inventoryMap.get(p._id.toString())?.toObject?.() || {}), quantity: comboQuantity(p) }
-            : inventoryMap.get(p._id.toString()),
+            : variantsByProduct.has(p._id.toString())
+                ? {
+                    ...(inventoryMap.get(p._id.toString())?.toObject?.() || {}),
+                    quantity: variantsByProduct.get(p._id.toString()).reduce((sum, v) => sum + v.stock, 0),
+                }
+                : inventoryMap.get(p._id.toString()),
         // A linked Percentage tax rule overrides the flat taxRate; a Fixed-amount rule
         // isn't supported end-to-end by the order/GST-split pipeline yet, so it falls
         // back to the flat rate rather than silently mis-computing tax.
