@@ -9,6 +9,9 @@ import { notificationService } from '../services/notificationService.js';
 import Store from '../models/Store.js';
 import { bumpCacheVersion } from '../config/redis.js';
 import { emitToStore } from '../config/socket.js';
+import InventoryBatch from '../models/InventoryBatch.js';
+import { cleanSerials, saveSerials, serialProblem } from '../utils/serialIntake.js';
+import { recordStockMovement, recordPriceChange, inventoryFilter } from '../utils/stockMovement.js';
 // @desc    Create a new Purchase Order
 // @route   POST /api/purchase-orders
 export const createPurchaseOrder = asyncHandler(async (req, res) => {
@@ -55,6 +58,37 @@ export const receivePurchaseOrder = asyncHandler(async (req, res) => {
         return res.status(400).json(new ApiResponse(400, null, 'Invalid PO or already fully received'));
     }
     const receivedInput = req.body.items;
+    const serialIds = (await Product.find({ _id: { $in: po.items.map((i) => i.product) }, trackSerial: true }).select('_id')).map((p) => p._id.toString());
+    // Serial / IMEI products need one serial number per unit received.
+    for (const item of po.items) {
+        if (!serialIds.includes(item.product.toString()))
+            continue;
+        const outstandingNow = item.quantity - (item.receivedQuantity || 0);
+        const m = (receivedInput || []).find((i) => i.productId === item.product.toString() &&
+            (i.variantId || undefined) === (item.variant?.toString() || undefined));
+        const qtyNow = receivedInput ? (m ? Math.min(m.receivedQty, outstandingNow) : 0) : outstandingNow;
+        if (qtyNow <= 0)
+            continue;
+        const problem = await serialProblem(req.tenantId, cleanSerials(m?.serialNumbers), qtyNow, item.name);
+        if (problem)
+            return res.status(400).json(new ApiResponse(400, null, problem));
+    }
+    // Batch-tracked products (medicine, food) need the batch number and expiry date before anything is saved.
+    const trackedIds = (await Product.find({ _id: { $in: po.items.map((i) => i.product) }, trackBatch: true }).select('_id name')).map((p) => p._id.toString());
+    const matchFor = (item) => receivedInput?.find((i) => i.productId === item.product.toString() &&
+        (i.variantId || undefined) === (item.variant?.toString() || undefined));
+    for (const item of po.items) {
+        if (!trackedIds.includes(item.product.toString()))
+            continue;
+        const outstandingNow = item.quantity - (item.receivedQuantity || 0);
+        const m = matchFor(item);
+        const qtyNow = receivedInput ? (m ? Math.min(m.receivedQty, outstandingNow) : 0) : outstandingNow;
+        if (qtyNow > 0 && (!m?.batchNumber?.trim() || !m?.expiryDate)) {
+            return res
+                .status(400)
+                .json(new ApiResponse(400, null, `Enter the batch number and expiry date for "${item.name}".`));
+        }
+    }
     // Update inventory for each item
     for (const item of po.items) {
         const outstanding = item.quantity - (item.receivedQuantity || 0);
@@ -69,15 +103,62 @@ export const receivePurchaseOrder = asyncHandler(async (req, res) => {
         if (receiveNow <= 0)
             continue;
         // Increment inventory
-        const inv = await Inventory.findOneAndUpdate({ product: item.product, store: req.tenantId }, { $inc: { quantity: receiveNow } }, { upsert: true, new: true });
+        // A variant's stock lives on its own Inventory row, not on the base product's.
+        const inv = await Inventory.findOneAndUpdate(inventoryFilter(req.tenantId, item.product, item.variant), { $inc: { quantity: receiveNow }, $set: { lastStockUpdate: new Date() } }, { upsert: true, new: true });
+        if (serialIds.includes(item.product.toString())) {
+            await saveSerials(req.tenantId, item.product, item.variant, cleanSerials(matchFor(item)?.serialNumbers), po.poNumber);
+        }
+        const batchInput = matchFor(item);
+        if (trackedIds.includes(item.product.toString()) && batchInput?.batchNumber && batchInput.expiryDate) {
+            await InventoryBatch.findOneAndUpdate({
+                storeId: req.tenantId,
+                product: item.product,
+                variant: item.variant || null,
+                batchNumber: batchInput.batchNumber.trim(),
+            }, {
+                $inc: { initialQuantity: receiveNow, currentQuantity: receiveNow },
+                $setOnInsert: { costPrice: item.costPrice },
+                $set: {
+                    supplier: po.supplier,
+                    purchaseOrder: po._id,
+                    expiryDate: new Date(batchInput.expiryDate),
+                    ...(batchInput.mfgDate ? { manufacturingDate: new Date(batchInput.mfgDate) } : {}),
+                    status: 'Active',
+                },
+            }, { upsert: true });
+        }
+        await recordStockMovement({
+            storeId: req.tenantId,
+            product: item.product,
+            variant: item.variant,
+            type: 'PURCHASE',
+            quantity: receiveNow,
+            reference: po.poNumber,
+            referenceId: po._id,
+            userId: req.user?._id,
+        });
         item.receivedQuantity = (item.receivedQuantity || 0) + receiveNow;
         // Standardize cost price update
         if (item.variant) {
             await ProductVariant.findByIdAndUpdate(item.variant, { $set: { costPrice: item.costPrice } });
         }
         else {
+            const before = await Product.findById(item.product).select('costPrice');
             await Product.findByIdAndUpdate(item.product, { $set: { costPrice: item.costPrice } });
+            await recordPriceChange({
+                storeId: req.tenantId,
+                product: item.product,
+                field: 'costPrice',
+                oldValue: before?.costPrice,
+                newValue: item.costPrice,
+                source: 'Purchase',
+                note: `PO ${po.poNumber}`,
+                userId: req.user?._id,
+            });
         }
+        await Product.findByIdAndUpdate(item.product, {
+            $set: { lastPurchasePrice: item.costPrice, lastPurchaseDate: new Date(), lastSupplier: po.supplier },
+        });
         emitToStore(req.tenantId.toString(), 'inventory-update', {
             productId: item.product,
             variantId: item.variant,
@@ -128,7 +209,7 @@ export const getPurchaseOrders = asyncHandler(async (req, res) => {
         query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
     const [pos, total] = await Promise.all([
-        PurchaseOrder.find(query).populate('supplier', 'name').sort({ createdAt: -1 }).skip(skip).limit(limit),
+        PurchaseOrder.find(query).populate('supplier', 'name').populate('items.product', 'trackBatch trackSerial').sort({ createdAt: -1 }).skip(skip).limit(limit),
         PurchaseOrder.countDocuments(query),
     ]);
     res.status(200).json(new ApiResponse(200, {

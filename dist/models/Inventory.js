@@ -5,6 +5,8 @@ const InventorySchema = new Schema({
     store: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
     quantity: { type: Number, required: true, default: 0 },
     lowStockThreshold: { type: Number, default: 10 },
+    maxStock: { type: Number },
+    reorderQty: { type: Number },
     lastStockUpdate: { type: Date, default: Date.now }
 }, { timestamps: true });
 // Ensure unique combination of product, store, and variant

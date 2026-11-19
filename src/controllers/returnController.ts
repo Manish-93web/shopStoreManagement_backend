@@ -2,6 +2,9 @@ import { Response } from 'express';
 import ReturnOrder from '../models/ReturnOrder.js';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
+import { recordStockMovement } from '../utils/stockMovement.js';
+import { expandForStock } from '../utils/comboStock.js';
+import ProductSerial from '../models/ProductSerial.js';
 import PaymentTransaction from '../models/PaymentTransaction.js';
 import Wallet from '../models/Wallet.js';
 import Customer from '../models/Customer.js';
@@ -44,12 +47,47 @@ export const returnController = {
             await returnOrder.save({ session });
 
             // 4. Update Inventory (Restock)
-            for (const item of items) {
+            for (const item of await expandForStock(storeId!, items)) {
                 await Inventory.findOneAndUpdate(
                     { product: item.product, variant: item.variant, store: storeId },
                     { $inc: { quantity: item.quantity } },
                     { session, upsert: true }
                 );
+                await recordStockMovement({
+                    storeId: storeId!,
+                    product: item.product,
+                    variant: item.variant,
+                    type: 'SALE_RETURN',
+                    quantity: item.quantity,
+                    reference: (returnOrder as any).returnNumber || 'Sales return',
+                    referenceId: returnOrder._id as any,
+                    userId: req.user?._id,
+                });
+            }
+
+            // Serial / IMEI units that were sold on that bill go back to "In Stock" (the returned ones if the
+            // return names them, otherwise as many as were returned).
+            for (const item of items) {
+                const named: string[] = Array.isArray(item.serialNumbers) ? item.serialNumbers : [];
+                const sold = await ProductSerial.find({
+                    storeId,
+                    product: item.product,
+                    status: 'Sold',
+                    currentOrder: originalOrderId,
+                    ...(named.length ? { serialNumber: { $in: named } } : {}),
+                })
+                    .limit(Math.ceil(item.quantity))
+                    .session(session);
+                for (const serial of sold) {
+                    serial.status = 'In Stock';
+                    serial.currentOrder = undefined;
+                    serial.history.push({
+                        action: 'Returned by customer',
+                        date: new Date(),
+                        referenceId: returnOrder._id as any,
+                    });
+                    await serial.save({ session });
+                }
             }
 
             // 5. Create Refund Transaction (If method provided)

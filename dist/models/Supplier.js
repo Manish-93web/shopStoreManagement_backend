@@ -5,6 +5,7 @@ const SupplierSchema = new Schema({
     phone: { type: String, required: true },
     email: { type: String },
     address: { type: String },
+    gstin: { type: String, trim: true, uppercase: true },
     notes: { type: String },
     tags: [{ type: String }],
     suppliedProducts: [{ type: Schema.Types.ObjectId, ref: 'Product' }],

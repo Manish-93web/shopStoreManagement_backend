@@ -13,7 +13,9 @@ export const inventoryAlertService = {
         const lowStockItems = await Inventory.find({
             store: storeId,
             $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
-        }).populate('product', 'name sku');
+        })
+            .populate('product', 'name sku isCombo isActive')
+            .then((rows) => rows.filter((r: any) => r.product && !r.product.isCombo && r.product.isActive !== false));
 
         if (lowStockItems.length === 0) return;
 

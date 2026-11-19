@@ -14,6 +14,11 @@ import { notificationService } from '../services/notificationService.js';
 import Store from '../models/Store.js';
 import webhookService from '../services/webhookService.js';
 import Category from '../models/Category.js';
+import Settings from '../models/Settings.js';
+import InventoryBatch from '../models/InventoryBatch.js';
+import AdjustmentRequest from '../models/AdjustmentRequest.js';
+import { applyStockAdjustment, VALID_ADJUSTMENT_REASONS } from '../utils/stockAdjust.js';
+import { recordStockMovement, recordPriceChange, inventoryFilter } from '../utils/stockMovement.js';
 import { emitToStore } from '../config/socket.js';
 import {
     isTenantApproved,
@@ -32,6 +37,49 @@ const subCategoryBelongsToCategory = async (
     return !!(await Category.exists({ _id: subCategoryId, parentId: categoryId, storeId: tenantId }));
 };
 
+// Other barcodes of a product must not clash with any barcode, SKU or other barcode in the same store.
+const altBarcodeError = async (
+    storeId: any,
+    alts: unknown,
+    ownBarcode: string | undefined,
+    selfId?: string
+): Promise<string | null> => {
+    if (!Array.isArray(alts) || alts.length === 0) return null;
+    const list = alts.map((a) => String(a).trim()).filter(Boolean);
+    if (new Set(list).size !== list.length) return 'The same extra barcode is entered twice.';
+    if (ownBarcode && list.includes(ownBarcode)) return 'An extra barcode cannot be the same as the main barcode.';
+    const clash: any = await Product.findOne({
+        storeId,
+        ...(selfId ? { _id: { $ne: selfId } } : {}),
+        $or: [{ barcode: { $in: list } }, { sku: { $in: list } }, { altBarcodes: { $in: list } }],
+    }).select('name');
+    return clash ? `A barcode you entered already belongs to "${clash.name}".` : null;
+};
+
+// A combo's components must be real, different, non-combo products of this store.
+const comboError = async (storeId: any, comboItems: any, selfId?: string): Promise<string | null> => {
+    if (!Array.isArray(comboItems) || comboItems.length === 0) return 'Add at least one product to the combo.';
+    const ids = comboItems.map((c) => String(c.product));
+    if (new Set(ids).size !== ids.length) return 'A product is listed twice in the combo.';
+    if (selfId && ids.includes(selfId)) return 'A combo cannot contain itself.';
+    if (comboItems.some((c) => !(Number(c.quantity) > 0))) return 'Every combo item needs a quantity.';
+    const found = await Product.find({ _id: { $in: ids }, storeId }).select('isCombo');
+    if (found.length !== ids.length) return 'A combo item was not found.';
+    if (found.some((p) => p.isCombo)) return 'A combo cannot contain another combo.';
+    return null;
+};
+
+// Reorder level / max stock / reorder quantity live on the Inventory row.
+const reorderFields = (body: any) => {
+    const out: any = {};
+    const num = (v: any) =>
+        v === '' || v === null || v === undefined || !Number.isFinite(Number(v)) ? undefined : Number(v);
+    if (num(body.reorderLevel) !== undefined) out.lowStockThreshold = num(body.reorderLevel);
+    if (body.maxStock !== undefined) out.maxStock = num(body.maxStock);
+    if (body.reorderQty !== undefined) out.reorderQty = num(body.reorderQty);
+    return out;
+};
+
 // @desc    Get all products for a tenant
 // @route   GET /api/products
 export const getProducts = asyncHandler(async (req: TenantRequest, res: Response) => {
@@ -39,10 +87,10 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
     const limit = parseInt(req.query.limit as string) || 50;
     const skip = (page - 1) * limit;
 
-    const { search, category, brand, stockStatus } = req.query;
+    const { search, category, brand, stockStatus, isActive } = req.query;
 
     const cacheVersion = await getCacheVersion(req.tenantId!.toString());
-    const cacheKey = `products:${req.tenantId}:v${cacheVersion}:${JSON.stringify({ search, category, brand, stockStatus, page, limit })}`;
+    const cacheKey = `products:${req.tenantId}:v${cacheVersion}:${JSON.stringify({ search, category, brand, stockStatus, isActive, page, limit })}`;
     if (process.env.SKIP_REDIS !== 'true') {
         const cached = await redisClient.get(cacheKey);
         if (cached) return res.status(200).json(new ApiResponse(200, JSON.parse(cached), 'Products from cache'));
@@ -65,11 +113,16 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
     }
 
     if (brand && brand !== 'All') query.brand = brand;
+    // Billing asks for isActive=true; the inventory screen asks for everything or only the archived ones.
+    if (isActive === 'true') query.isActive = { $ne: false };
+    else if (isActive === 'false') query.isActive = false;
     if (search) {
         query.$or = [
             { name: { $regex: search, $options: 'i' } },
             { sku: { $regex: search, $options: 'i' } },
             { barcode: { $regex: search, $options: 'i' } },
+            { altBarcodes: { $regex: search, $options: 'i' } },
+            { location: { $regex: search, $options: 'i' } },
         ];
     }
 
@@ -93,6 +146,7 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
         .populate('category')
         .populate('subCategory')
         .populate('taxRule')
+        .populate('comboItems.product', 'name')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -102,9 +156,48 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
     const inventories = await Inventory.find({ product: { $in: productIds }, store: req.tenantId });
     const inventoryMap = new Map(inventories.map((inv) => [inv.product.toString(), inv]));
 
+    // Batch-tracked products show their nearest expiry; a combo shows how many bundles its components allow.
+    const batchProductIds = products.filter((p: any) => p.trackBatch).map((p) => p._id);
+    const expiryRows = batchProductIds.length
+        ? await InventoryBatch.aggregate([
+              {
+                  $match: {
+                      storeId: new mongoose.Types.ObjectId(String(req.tenantId)),
+                      product: { $in: batchProductIds },
+                      status: 'Active',
+                      currentQuantity: { $gt: 0 },
+                      expiryDate: { $gt: new Date() },
+                  },
+              },
+              { $group: { _id: '$product', nearestExpiry: { $min: '$expiryDate' } } },
+          ])
+        : [];
+    const expiryByProduct = new Map(expiryRows.map((r: any) => [r._id.toString(), r.nearestExpiry]));
+
+    const comboProducts = products.filter((p: any) => p.isCombo);
+    const idOf = (v: any): string => String(v?._id || v);
+    const componentIds = comboProducts.flatMap((c: any) => (c.comboItems || []).map((ci: any) => idOf(ci.product)));
+    const componentStock = componentIds.length
+        ? await Inventory.find({ store: req.tenantId, product: { $in: componentIds }, variant: { $exists: false } })
+        : [];
+    const stockByComponent = new Map(componentStock.map((i) => [i.product.toString(), i.quantity]));
+    const comboQuantity = (c: any): number =>
+        Math.max(
+            0,
+            Math.min(
+                ...(c.comboItems || []).map((ci: any) =>
+                    ci.quantity > 0 ? Math.floor((stockByComponent.get(idOf(ci.product)) ?? 0) / ci.quantity) : 0
+                ),
+                Number.MAX_SAFE_INTEGER
+            )
+        );
+
     const productsWithInventory = products.map((p: any) => ({
         ...p,
-        inventory: inventoryMap.get(p._id.toString()),
+        nearestExpiry: expiryByProduct.get(p._id.toString()),
+        inventory: p.isCombo
+            ? { ...(inventoryMap.get(p._id.toString())?.toObject?.() || {}), quantity: comboQuantity(p) }
+            : inventoryMap.get(p._id.toString()),
         // A linked Percentage tax rule overrides the flat taxRate; a Fixed-amount rule
         // isn't supported end-to-end by the order/GST-split pipeline yet, so it falls
         // back to the flat rate rather than silently mis-computing tax.
@@ -191,6 +284,15 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
         const generateBarcode = customAlphabet('0123456789', 12);
         productData.barcode = generateBarcode();
     }
+    const altErr = await altBarcodeError(req.tenantId, productData.altBarcodes, productData.barcode);
+    if (altErr) return res.status(400).json(new ApiResponse(400, null, altErr));
+    if (productData.isCombo) {
+        const cErr = await comboError(req.tenantId, productData.comboItems);
+        if (cErr) return res.status(400).json(new ApiResponse(400, null, cErr));
+    }
+    if (Array.isArray(productData.altBarcodes)) {
+        productData.altBarcodes = productData.altBarcodes.map((a: any) => String(a).trim()).filter(Boolean);
+    }
     // SKU is optional on the form — derive one from the (unique per store) barcode when left blank.
     if (!productData.sku || !String(productData.sku).trim()) {
         productData.sku = `SKU-${productData.barcode}`;
@@ -203,7 +305,18 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
         product: product._id,
         store: req.tenantId,
         quantity: req.body.initialStock || 0,
+        ...reorderFields(req.body),
     });
+    if (Number(req.body.initialStock) > 0) {
+        await recordStockMovement({
+            storeId: req.tenantId!,
+            product: product._id as any,
+            type: 'OPENING',
+            quantity: Number(req.body.initialStock),
+            reference: 'Opening stock',
+            userId: req.user?._id,
+        });
+    }
 
     // Audit Log
     await AuditLog.create({
@@ -225,7 +338,9 @@ export const createProduct = asyncHandler(async (req: TenantRequest, res: Respon
 // @desc    Update product
 // @route   PUT /api/products/:id
 export const updateProduct = asyncHandler(async (req: TenantRequest, res: Response) => {
-    const existing = await Product.findOne({ _id: req.params.id, storeId: req.tenantId }).select('price category');
+    const existing = await Product.findOne({ _id: req.params.id, storeId: req.tenantId }).select(
+        'price mrp costPrice category barcode'
+    );
     if (!existing) return res.status(404).json(new ApiResponse(404, null, 'Product not found'));
 
     // An empty sub-category clears it; a real one must be a child of the (new or current) category.
@@ -239,10 +354,60 @@ export const updateProduct = asyncHandler(async (req: TenantRequest, res: Respon
         }
     }
 
+    // Only the owner may change prices when the store has turned that off for managers.
+    const touchesPrice = ['price', 'mrp', 'costPrice'].some(
+        (f) => typeof req.body[f] === 'number' && req.body[f] !== (existing as any)[f]
+    );
+    if (touchesPrice && req.user?.role === 'MANAGER') {
+        const cfg = await Settings.findOne({ storeId: req.tenantId }).select('inventoryConfig');
+        if (cfg?.inventoryConfig?.managersCanChangePrice === false) {
+            return res
+                .status(403)
+                .json(new ApiResponse(403, null, 'Only the owner can change prices. Ask the owner to update it.'));
+        }
+    }
+    if (req.body.isCombo === true || (req.body.comboItems !== undefined && req.body.isCombo !== false)) {
+        const cErr = await comboError(req.tenantId, req.body.comboItems, String(existing._id));
+        if (cErr) return res.status(400).json(new ApiResponse(400, null, cErr));
+    }
+    if (req.body.altBarcodes !== undefined) {
+        const altErr = await altBarcodeError(
+            req.tenantId,
+            req.body.altBarcodes,
+            req.body.barcode || existing.barcode,
+            String(existing._id)
+        );
+        if (altErr) return res.status(400).json(new ApiResponse(400, null, altErr));
+        req.body.altBarcodes = (req.body.altBarcodes as any[]).map((a) => String(a).trim()).filter(Boolean);
+    }
+
     const product = await Product.findOneAndUpdate({ _id: req.params.id, storeId: req.tenantId }, req.body, {
         returnDocument: 'after',
     }).populate('taxRule');
     if (!product) return res.status(404).json(new ApiResponse(404, null, 'Product not found'));
+
+    const reorder = reorderFields(req.body);
+    if (Object.keys(reorder).length > 0) {
+        await Inventory.findOneAndUpdate(
+            inventoryFilter(req.tenantId!, product._id as any),
+            { $set: reorder },
+            { upsert: true }
+        );
+    }
+
+    for (const field of ['price', 'mrp', 'costPrice'] as const) {
+        if (typeof req.body[field] === 'number') {
+            await recordPriceChange({
+                storeId: req.tenantId!,
+                product: product._id as any,
+                field,
+                oldValue: (existing as any)[field],
+                newValue: product[field],
+                source: 'Manual',
+                userId: req.user?._id,
+            });
+        }
+    }
 
     if (process.env.SKIP_REDIS !== 'true') {
         await bumpCacheVersion(req.tenantId!.toString());
@@ -311,106 +476,79 @@ export const deleteProduct = asyncHandler(async (req: TenantRequest, res: Respon
     res.status(200).json(new ApiResponse(200, null, 'Product deleted successfully'));
 });
 
-const VALID_ADJUSTMENT_REASONS = ['Damaged', 'Correction', 'Restock', 'Expire', 'Other'];
-
 // @desc    Adjust stock level
 // @route   PATCH /api/products/:id/adjust
 export const adjustStock = asyncHandler(async (req: TenantRequest, res: Response) => {
     const { quantity, reason, type } = req.body;
-    const adjustQty = type === 'add' ? quantity : -quantity;
+    const qty = Number(quantity);
     const adjustmentReason = reason || 'Correction';
 
     // Validate before touching data — an invalid reason used to fail *after* the
     // inventory quantity was already incremented (no transaction), leaving the
     // stock changed with no matching audit record. Fail fast instead.
+    if (!Number.isFinite(qty) || qty <= 0) {
+        return res.status(400).json(new ApiResponse(400, null, 'Enter a quantity greater than zero.'));
+    }
     if (!VALID_ADJUSTMENT_REASONS.includes(adjustmentReason)) {
         return res
             .status(400)
             .json(new ApiResponse(400, null, `Invalid reason. Must be one of: ${VALID_ADJUSTMENT_REASONS.join(', ')}`));
     }
+    const adjustQty = type === 'add' ? qty : -qty;
 
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    let inv;
-    try {
-        inv = await Inventory.findOneAndUpdate(
-            { product: req.params.id, store: req.tenantId },
-            {
-                $inc: { quantity: adjustQty },
-                $set: { lastStockUpdate: new Date() },
-            },
-            { new: true, upsert: true, session }
-        );
+    const product = await Product.findOne({ _id: req.params.id, storeId: req.tenantId }).select('name');
+    if (!product) return res.status(404).json(new ApiResponse(404, null, 'Product not found'));
 
-        // Track the adjustment
-        await StockAdjustment.create(
-            [
-                {
-                    productId: req.params.id as any,
-                    storeId: req.tenantId as any,
-                    previousQuantity: (inv?.quantity || 0) - adjustQty,
-                    newQuantity: inv?.quantity || 0,
-                    adjustmentAmount: adjustQty,
-                    type: type === 'add' ? 'ADD' : 'SUBTRACT',
-                    reason: adjustmentReason,
-                    notes: req.body.notes || '',
-                    createdBy: req.user?._id,
-                },
-            ],
-            { session }
-        );
-
-        await session.commitTransaction();
-    } catch (err) {
-        await session.abortTransaction();
-        throw err;
-    } finally {
-        session.endSession();
+    // Who may adjust stock, and which adjustments need the owner's approval, is the store's choice.
+    const settings = await Settings.findOne({ storeId: req.tenantId }).select('inventoryConfig');
+    const role = req.user?.role;
+    if (role === 'CASHIER' && settings?.inventoryConfig?.cashierCanAdjustStock !== true) {
+        return res
+            .status(403)
+            .json(new ApiResponse(403, null, 'You are not allowed to adjust stock. Ask the owner or a manager.'));
     }
-
-    // Audit log — StockAdjustment (above) is the detailed ledger entry; this
-    // makes the same event show up in the unified audit trail too, which
-    // previously only recorded product/customer/supplier changes, not stock.
-    await AuditLog.create({
-        userId: req.user?._id,
-        storeId: req.tenantId,
-        action: 'STOCK_ADJUSTMENT',
-        entity: 'Product',
-        entityId: req.params.id as any,
-        oldValue: (inv?.quantity || 0) - adjustQty,
-        newValue: inv?.quantity,
-        details: `Stock ${type === 'add' ? 'increased' : 'decreased'} by ${Math.abs(adjustQty)} (${adjustmentReason}).`,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-    });
-
-    // Invalidate cache
-    if (process.env.SKIP_REDIS !== 'true') {
-        await bumpCacheVersion(req.tenantId!.toString());
-    }
-
-    // Notify clients about stock change
-    emitToStore(req.tenantId!.toString(), 'inventory-update', {
-        productId: req.params.id,
-        variantId: undefined,
-        newQuantity: inv?.quantity,
-    });
-
-    // 3. Check for Low Stock Notification
-    if (inv && inv.quantity <= (inv.lowStockThreshold || 5)) {
+    const threshold = settings?.inventoryConfig?.adjustmentApprovalThreshold || 0;
+    if (threshold > 0 && role !== 'STORE_OWNER' && role !== 'SUPER_ADMIN' && qty > threshold) {
+        const request = await AdjustmentRequest.create({
+            storeId: req.tenantId,
+            product: product._id,
+            quantity: adjustQty,
+            reason: adjustmentReason,
+            notes: req.body.notes,
+            requestedBy: req.user?._id,
+        });
         const store = await Store.findById(req.tenantId);
-        const product = await Product.findById(req.params.id);
-        if (store && product) {
+        if (store) {
             await notificationService.send({
                 recipientId: store.owner.toString(),
                 storeId: req.tenantId!.toString(),
-                title: `Low Stock Alert`,
-                message: `"${product.name}" is running low (${inv.quantity} units remaining).`,
+                title: 'Stock adjustment needs approval',
+                message: `${req.user?.name || 'A user'} asked to ${adjustQty > 0 ? 'add' : 'remove'} ${qty} of "${product.name}" (${adjustmentReason}).`,
                 type: 'WARNING',
                 metadata: { productId: product._id },
             });
         }
+        return res
+            .status(202)
+            .json(
+                new ApiResponse(
+                    202,
+                    { requestId: request._id, pending: true },
+                    `Adjustments above ${threshold} need the owner's approval. Your request was sent.`
+                )
+            );
     }
+
+    const inv = await applyStockAdjustment({
+        tenantId: req.tenantId!,
+        productId: String(req.params.id),
+        quantity: adjustQty,
+        reason: adjustmentReason,
+        notes: req.body.notes,
+        userId: req.user?._id,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+    });
 
     res.status(200).json(new ApiResponse(200, { inventory: inv, reason: adjustmentReason }, 'Stock adjusted'));
 });
@@ -446,6 +584,16 @@ export const bulkImportProducts = asyncHandler(async (req: TenantRequest, res: R
                 barcode: data.barcode || generateBarcode(),
             });
             await Inventory.create({ product: product._id, store: req.tenantId, quantity: data.initialStock || 0 });
+            if (Number(data.initialStock) > 0) {
+                await recordStockMovement({
+                    storeId: req.tenantId!,
+                    product: product._id as any,
+                    type: 'OPENING',
+                    quantity: Number(data.initialStock),
+                    reference: 'Opening stock',
+                    userId: req.user?._id,
+                });
+            }
             results.success++;
             currentCount++;
         } catch (error: any) {

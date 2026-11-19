@@ -1,4 +1,5 @@
 import Transfer from '../models/Transfer.js';
+import { recordStockMovement } from '../utils/stockMovement.js';
 import Inventory from '../models/Inventory.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
@@ -40,6 +41,16 @@ export const shipTransfer = asyncHandler(async (req, res) => {
     // Reduce inventory from 'fromStore'
     for (const item of transfer.items) {
         const inv = await Inventory.findOneAndUpdate({ product: item.product, variant: item.variant, store: req.tenantId }, { $inc: { quantity: -item.quantity } }, { new: true });
+        await recordStockMovement({
+            storeId: req.tenantId,
+            product: item.product,
+            variant: item.variant,
+            type: 'TRANSFER_OUT',
+            quantity: -item.quantity,
+            reference: `Transfer ${transfer.transferNumber || transfer._id}`,
+            referenceId: transfer._id,
+            userId: req.user?._id,
+        });
         emitToStore(req.tenantId.toString(), 'inventory-update', {
             productId: item.product,
             variantId: item.variant,
@@ -63,6 +74,16 @@ export const receiveTransfer = asyncHandler(async (req, res) => {
     // Increase inventory at 'toStore'
     for (const item of transfer.items) {
         const inv = await Inventory.findOneAndUpdate({ product: item.product, variant: item.variant, store: req.tenantId }, { $inc: { quantity: item.quantity } }, { upsert: true, new: true });
+        await recordStockMovement({
+            storeId: req.tenantId,
+            product: item.product,
+            variant: item.variant,
+            type: 'TRANSFER_IN',
+            quantity: item.quantity,
+            reference: `Transfer ${transfer.transferNumber || transfer._id}`,
+            referenceId: transfer._id,
+            userId: req.user?._id,
+        });
         emitToStore(req.tenantId.toString(), 'inventory-update', {
             productId: item.product,
             variantId: item.variant,

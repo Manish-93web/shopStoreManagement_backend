@@ -26,10 +26,18 @@ const router = express.Router();
 
 router.use(protect, tenantHandler, checkTrialExpiry);
 
+router.get('/products/export', authorize('STORE_OWNER', 'MANAGER', 'SUPER_ADMIN'), importController.exportProducts);
+
+router.get(
+    '/products/sample',
+    authorize('STORE_OWNER', 'MANAGER', 'SUPER_ADMIN'),
+    importController.downloadProductSample
+);
+
 router.post(
     '/products',
     protect,
-    authorize('STORE_OWNER', 'SUPER_ADMIN'),
+    authorize('STORE_OWNER', 'MANAGER', 'SUPER_ADMIN'),
     upload.single('file'),
     importController.importProducts
 );

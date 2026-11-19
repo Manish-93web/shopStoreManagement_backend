@@ -1,6 +1,6 @@
 import mongoose, { Schema } from 'mongoose';
 const ProductSerialSchema = new Schema({
-    serialNumber: { type: String, required: true, unique: true },
+    serialNumber: { type: String, required: true },
     product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
     variant: { type: Schema.Types.ObjectId, ref: 'ProductVariant' },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
@@ -19,4 +19,6 @@ const ProductSerialSchema = new Schema({
         }],
     warrantyExpiry: { type: Date },
 }, { timestamps: true });
+// A serial number only needs to be unique inside one store.
+ProductSerialSchema.index({ storeId: 1, serialNumber: 1 }, { unique: true });
 export default mongoose.model('ProductSerial', ProductSerialSchema);

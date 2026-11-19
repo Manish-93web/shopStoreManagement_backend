@@ -4,6 +4,7 @@ import Inventory from '../models/Inventory.js';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { bumpCacheVersion } from '../config/redis.js';
+import { recordStockMovement } from '../utils/stockMovement.js';
 // @desc    Get all variants for a product
 // @route   GET /api/v1/products/:productId/variants
 export const getVariants = asyncHandler(async (req, res) => {
@@ -47,6 +48,17 @@ export const createVariant = asyncHandler(async (req, res) => {
         store: req.tenantId,
         quantity: req.body.initialStock || 0,
     });
+    if (Number(req.body.initialStock) > 0) {
+        await recordStockMovement({
+            storeId: req.tenantId,
+            product: productId,
+            variant: variant._id,
+            type: 'OPENING',
+            quantity: Number(req.body.initialStock),
+            reference: 'Opening stock',
+            userId: req.user?._id,
+        });
+    }
     // Mark parent product as having variants
     await Product.findByIdAndUpdate(productId, { hasVariants: true });
     await bumpCacheVersion(req.tenantId.toString());
@@ -67,7 +79,20 @@ export const updateVariant = asyncHandler(async (req, res) => {
     // Update inventory if stock/initialStock provided
     const newStock = stock !== undefined ? stock : initialStock;
     if (newStock !== undefined) {
+        const before = await Inventory.findOne({ variant: variant._id, store: req.tenantId });
         await Inventory.findOneAndUpdate({ variant: variant._id, store: req.tenantId }, { $set: { quantity: newStock } }, { upsert: true, returnDocument: 'after' });
+        const delta = Number(newStock) - (before?.quantity ?? 0);
+        if (delta !== 0) {
+            await recordStockMovement({
+                storeId: req.tenantId,
+                product: variant.productId,
+                variant: variant._id,
+                type: 'ADJUSTMENT',
+                quantity: delta,
+                reference: 'Variant stock edited',
+                userId: req.user?._id,
+            });
+        }
     }
     await bumpCacheVersion(req.tenantId.toString());
     res.status(200).json(new ApiResponse(200, variant, 'Variant updated successfully'));

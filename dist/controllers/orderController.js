@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
+import Product from '../models/Product.js';
 import Customer from '../models/Customer.js';
 import AuditLog from '../models/AuditLog.js';
 import asyncHandler from '../utils/asyncHandler.js';
@@ -16,6 +17,10 @@ import Loyalty from '../models/Loyalty.js';
 import redisClient, { bumpCacheVersion, getCacheVersion } from '../config/redis.js';
 import CustomerDue from '../models/CustomerDue.js';
 import InventoryBatch from '../models/InventoryBatch.js';
+import Settings from '../models/Settings.js';
+import { recordStockMovement } from '../utils/stockMovement.js';
+import { expandForStock } from '../utils/comboStock.js';
+import { isDecimalUnit } from '../utils/units.js';
 import ProductSerial from '../models/ProductSerial.js';
 // Batch (FEFO — soonest-expiring first) and serial (FIFO, auto-assigned since
 // POS checkout has no per-unit serial picker) consumption for a sold item.
@@ -25,7 +30,14 @@ import ProductSerial from '../models/ProductSerial.js';
 // exist to reconcile against.
 async function consumeStockRecords(storeId, item, orderId) {
     let remaining = item.quantity;
-    const batchQuery = { storeId, product: item.product, status: 'Active', currentQuantity: { $gt: 0 } };
+    const batchQuery = {
+        storeId,
+        product: item.product,
+        status: 'Active',
+        currentQuantity: { $gt: 0 },
+        // Expired batches are never sold from.
+        $or: [{ expiryDate: { $exists: false } }, { expiryDate: null }, { expiryDate: { $gt: new Date() } }],
+    };
     if (item.variant)
         batchQuery.variant = item.variant;
     const batches = await InventoryBatch.find(batchQuery).sort({ expiryDate: 1 });
@@ -37,11 +49,21 @@ async function consumeStockRecords(storeId, item, orderId) {
         remaining -= deduct;
         await batch.save();
     }
+    // Serial-tracked products sell the exact serial numbers entered on the bill; others auto-assign.
     const serialQuery = { storeId, product: item.product, status: 'In Stock' };
     if (item.variant)
         serialQuery.variant = item.variant;
+    const chosen = Array.isArray(item.serialNumbers) ? item.serialNumbers : [];
+    if (chosen.length > 0)
+        serialQuery.serialNumber = { $in: chosen };
     const serials = await ProductSerial.find(serialQuery).sort({ createdAt: 1 }).limit(item.quantity);
+    const warrantyMonths = item.warrantyMonths || 0;
     for (const serial of serials) {
+        if (warrantyMonths > 0) {
+            const until = new Date();
+            until.setMonth(until.getMonth() + warrantyMonths);
+            serial.warrantyExpiry = until;
+        }
         serial.status = 'Sold';
         serial.currentOrder = orderId;
         serial.history.push({ action: 'Sold', date: new Date(), referenceId: orderId });
@@ -89,8 +111,103 @@ async function restoreStockRecords(storeId, item, orderId) {
 // @route   POST /api/orders
 // @access  Private (Cashier/Manager/Owner)
 export const createOrder = asyncHandler(async (req, res) => {
-    const { customerId, items, subTotal, taxTotal, discountTotal, discountReason, grandTotal, paymentDetails, loyaltyPointsUsed, couponCode, isGstBill = true, } = req.body;
+    const { customerId, items, subTotal, taxTotal, discountTotal, discountReason, grandTotal, paymentDetails, loyaltyPointsUsed, couponCode, isGstBill = true, roundOff = 0, } = req.body;
     const orderNumber = `ORD-${Date.now()}`;
+    // Stock rules: archived products cannot be sold, whole-number units reject fractions, and — when the
+    // store turned "allow negative stock" off — a sale cannot take more than what is on hand.
+    const [saleProducts, saleSettings] = await Promise.all([
+        Product.find({ _id: { $in: items.map((i) => i.product) }, storeId: req.tenantId }).select('name unit isActive trackBatch trackSerial warrantyMonths'),
+        Settings.findOne({ storeId: req.tenantId }).select('inventoryConfig'),
+    ]);
+    const saleProductById = new Map(saleProducts.map((p) => [p._id.toString(), p]));
+    const allowNegativeStock = saleSettings?.inventoryConfig?.allowNegativeStock !== false;
+    for (const item of items) {
+        const p = saleProductById.get(String(item.product));
+        if (!p)
+            return res.status(400).json(new ApiResponse(400, null, `Product "${item.name}" was not found.`));
+        if (p.isActive === false) {
+            return res
+                .status(400)
+                .json(new ApiResponse(400, null, `"${p.name}" is inactive and cannot be sold. Remove it from the bill.`));
+        }
+        if (!(item.quantity > 0)) {
+            return res.status(400).json(new ApiResponse(400, null, `Enter a quantity for "${p.name}".`));
+        }
+        if (!isDecimalUnit(p.unit) && !Number.isInteger(item.quantity)) {
+            return res
+                .status(400)
+                .json(new ApiResponse(400, null, `"${p.name}" is sold in whole ${p.unit || 'pcs'} only.`));
+        }
+        // Serial / IMEI products: one serial number per unit, each one in stock.
+        if (p.trackSerial) {
+            const serials = (item.serialNumbers || []).map((s) => String(s).trim()).filter(Boolean);
+            if (serials.length !== item.quantity || new Set(serials).size !== serials.length) {
+                return res
+                    .status(400)
+                    .json(new ApiResponse(400, null, `Enter ${item.quantity} different serial number${item.quantity > 1 ? 's' : ''} for "${p.name}".`));
+            }
+            const available = await ProductSerial.countDocuments({
+                storeId: req.tenantId,
+                product: item.product,
+                status: 'In Stock',
+                serialNumber: { $in: serials },
+            });
+            if (available !== serials.length) {
+                return res
+                    .status(400)
+                    .json(new ApiResponse(400, null, `A serial number for "${p.name}" is not in stock.`));
+            }
+            item.serialNumbers = serials;
+        }
+        item.warrantyMonths = p.warrantyMonths || 0;
+        // Medicine / food: when batches are recorded, only unexpired stock may be sold.
+        if (p.trackBatch) {
+            const batches = await InventoryBatch.find({
+                storeId: req.tenantId,
+                product: item.product,
+                status: 'Active',
+                currentQuantity: { $gt: 0 },
+            }).select('currentQuantity expiryDate');
+            if (batches.length > 0) {
+                const now = new Date();
+                const fresh = batches
+                    .filter((b) => !b.expiryDate || b.expiryDate > now)
+                    .reduce((sum, b) => sum + b.currentQuantity, 0);
+                if (fresh < item.quantity) {
+                    return res
+                        .status(400)
+                        .json(new ApiResponse(400, null, fresh > 0
+                        ? `Only ${fresh} unexpired of "${p.name}" available.`
+                        : `All stock of "${p.name}" has expired and cannot be sold.`));
+                }
+            }
+        }
+    }
+    // A combo has no stock of its own — the stock that moves is its components'.
+    const stockItems = await expandForStock(req.tenantId, items);
+    const wanted = new Map();
+    for (const item of stockItems) {
+        const key = `${item.product}:${item.variant || ''}`;
+        wanted.set(key, { qty: (wanted.get(key)?.qty || 0) + item.quantity, item });
+    }
+    if (!allowNegativeStock) {
+        for (const { qty, item } of wanted.values()) {
+            const invFilter = { store: req.tenantId };
+            if (item.variant)
+                invFilter.variant = item.variant;
+            else {
+                invFilter.product = item.product;
+                invFilter.variant = { $exists: false };
+            }
+            const stock = await Inventory.findOne(invFilter).select('quantity');
+            const available = stock?.quantity ?? 0;
+            if (available < qty) {
+                return res
+                    .status(400)
+                    .json(new ApiResponse(400, null, `Not enough stock for "${item.name}": ${available} available, ${qty} requested.`));
+            }
+        }
+    }
     // Payment status/amounts are computed server-side from what was actually
     // collected, never trusted from the client — a sale that falls short of the
     // total is a partial/unpaid credit sale, which can only be recorded against
@@ -159,6 +276,7 @@ export const createOrder = asyncHandler(async (req, res) => {
         discountTotal,
         discountReason,
         grandTotal,
+        roundOff: Number(roundOff) || 0,
         amountPaid,
         amountDue,
         paymentDetails,
@@ -259,8 +377,8 @@ export const createOrder = asyncHandler(async (req, res) => {
             metadata: { orderId: order._id },
         });
     }
-    // Reduce inventory for each item
-    for (const item of items) {
+    // Reduce inventory for each item (a combo is replaced by its components)
+    for (const item of stockItems) {
         const invQuery = { store: req.tenantId };
         if (item.variant) {
             invQuery.variant = item.variant;
@@ -270,6 +388,16 @@ export const createOrder = asyncHandler(async (req, res) => {
             invQuery.variant = { $exists: false }; // Base product stock if no variant
         }
         const inv = await Inventory.findOneAndUpdate(invQuery, { $inc: { quantity: -item.quantity } }, { returnDocument: 'after' });
+        await recordStockMovement({
+            storeId: req.tenantId,
+            product: item.product,
+            variant: item.variant,
+            type: 'SALE',
+            quantity: -item.quantity,
+            reference: orderNumber,
+            referenceId: order._id,
+            userId: req.user?._id,
+        });
         try {
             await consumeStockRecords(req.tenantId.toString(), item, order._id);
         }
@@ -385,7 +513,8 @@ export const cancelOrder = asyncHandler(async (req, res) => {
             await session.abortTransaction();
             return res.status(400).json(new ApiResponse(400, null, 'Order is already cancelled'));
         }
-        for (const item of order.items) {
+        const restoreItems = await expandForStock(req.tenantId, order.items);
+        for (const item of restoreItems) {
             const invQuery = { store: req.tenantId };
             if (item.variant) {
                 invQuery.variant = item.variant;
@@ -395,6 +524,16 @@ export const cancelOrder = asyncHandler(async (req, res) => {
                 invQuery.variant = { $exists: false };
             }
             await Inventory.findOneAndUpdate(invQuery, { $inc: { quantity: item.quantity } }, { session, upsert: true });
+            await recordStockMovement({
+                storeId: req.tenantId,
+                product: item.product,
+                variant: item.variant,
+                type: 'SALE_CANCEL',
+                quantity: item.quantity,
+                reference: order.orderNumber,
+                referenceId: order._id,
+                userId: req.user?._id,
+            });
             try {
                 await restoreStockRecords(req.tenantId.toString(), item, order._id);
             }

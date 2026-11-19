@@ -7,6 +7,7 @@ export interface IOrderItem {
     quantity: number;
     price: number;
     tax: number;
+    serialNumbers?: string[]; // Serial / IMEI numbers sold on this line
     hsnCode?: string;
     cgst?: number;
     sgst?: number;
@@ -41,6 +42,7 @@ export interface IOrder extends Document {
     discountTotal: number;
     discountReason?: string;
     grandTotal: number;
+    roundOff?: number; // Added to the total to round it, see Settings -> taxConfig.roundingMode
     amountPaid: number;
     amountDue: number;
     loyaltyPointsUsed?: number;
@@ -65,6 +67,7 @@ const OrderSchema: Schema = new Schema(
                 quantity: { type: Number, required: true },
                 price: { type: Number, required: true },
                 tax: { type: Number, default: 0 },
+                serialNumbers: [{ type: String }],
                 hsnCode: { type: String },
                 cgst: { type: Number, default: 0 },
                 sgst: { type: Number, default: 0 },
@@ -84,6 +87,7 @@ const OrderSchema: Schema = new Schema(
         discountTotal: { type: Number, default: 0 },
         discountReason: { type: String },
         grandTotal: { type: Number, required: true },
+        roundOff: { type: Number, default: 0 },
         amountPaid: { type: Number, required: true },
         amountDue: { type: Number, required: true, default: 0 },
         loyaltyPointsUsed: { type: Number, default: 0 },

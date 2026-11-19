@@ -4,6 +4,8 @@ import ExchangeOrder from '../models/ExchangeOrder.js';
 import ReturnOrder from '../models/ReturnOrder.js';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
+import { recordStockMovement } from '../utils/stockMovement.js';
+import { expandForStock } from '../utils/comboStock.js';
 import Wallet from '../models/Wallet.js';
 import Customer from '../models/Customer.js';
 import PaymentTransaction from '../models/PaymentTransaction.js';
@@ -77,12 +79,21 @@ export const createExchange = asyncHandler(async (req: TenantRequest, res: Respo
             { session }
         );
 
-        for (const item of returnedItems) {
+        for (const item of await expandForStock(req.tenantId!, returnedItems)) {
             await Inventory.findOneAndUpdate(
                 { product: item.product, variant: item.variant, store: req.tenantId },
                 { $inc: { quantity: item.quantity } },
                 { session, upsert: true }
             );
+            await recordStockMovement({
+                storeId: req.tenantId!,
+                product: item.product,
+                variant: item.variant,
+                type: 'EXCHANGE',
+                quantity: item.quantity,
+                reference: 'Exchange - returned item',
+                userId: req.user?._id,
+            });
         }
 
         // 2. New-order leg — decrement stock for the new items
@@ -124,7 +135,7 @@ export const createExchange = asyncHandler(async (req: TenantRequest, res: Respo
             { session }
         );
 
-        for (const item of newItems) {
+        for (const item of await expandForStock(req.tenantId!, newItems)) {
             const invQuery: any = { store: req.tenantId };
             if (item.variant) {
                 invQuery.variant = item.variant;
@@ -137,6 +148,15 @@ export const createExchange = asyncHandler(async (req: TenantRequest, res: Respo
                 { $inc: { quantity: -item.quantity } },
                 { session, upsert: true }
             );
+            await recordStockMovement({
+                storeId: req.tenantId!,
+                product: item.product,
+                variant: item.variant,
+                type: 'EXCHANGE',
+                quantity: -item.quantity,
+                reference: 'Exchange - new item',
+                userId: req.user?._id,
+            });
         }
 
         // 3. Excess return value (returnedTotal > newTotal) becomes Wallet credit

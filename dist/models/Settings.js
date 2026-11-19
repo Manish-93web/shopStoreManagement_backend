@@ -10,6 +10,7 @@ const SettingsSchema = new Schema({
     taxConfig: {
         defaultTaxRate: { type: Number, default: 0 },
         taxSystem: { type: String, enum: ['GST', 'VAT', 'SalesTax'], default: 'GST' },
+        roundingMode: { type: String, enum: ['none', 'nearest', 'up', 'down'], default: 'none' },
     },
     receiptConfig: {
         header: { type: String },
@@ -21,6 +22,12 @@ const SettingsSchema = new Schema({
         lowStockThreshold: { type: Number, default: 10 },
         enableEmail: { type: Boolean, default: true },
         enableSMS: { type: Boolean, default: false },
+    },
+    inventoryConfig: {
+        allowNegativeStock: { type: Boolean, default: true },
+        cashierCanAdjustStock: { type: Boolean, default: false },
+        managersCanChangePrice: { type: Boolean, default: true },
+        adjustmentApprovalThreshold: { type: Number, default: 0 },
     },
     archiveConfig: {
         autoArchiveEnabled: { type: Boolean, default: false },

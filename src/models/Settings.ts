@@ -9,6 +9,7 @@ export interface ISettings extends Document {
     taxConfig: {
         defaultTaxRate: number;
         taxSystem: 'GST' | 'VAT' | 'SalesTax';
+        roundingMode: 'none' | 'nearest' | 'up' | 'down'; // How the bill total is rounded to a whole rupee
     };
     receiptConfig: {
         header?: string;
@@ -26,6 +27,12 @@ export interface ISettings extends Document {
         orderRetentionMonths: number;
         notificationRetentionDays: number;
         auditLogRetentionMonths: number;
+    };
+    inventoryConfig: {
+        allowNegativeStock: boolean; // false = billing is blocked when stock is not enough
+        cashierCanAdjustStock: boolean; // Cashiers may adjust stock by hand
+        managersCanChangePrice: boolean; // false = only the owner may change prices (selling, MRP, cost)
+        adjustmentApprovalThreshold: number; // Manager adjustments larger than this need the owner's approval (0 = off)
     };
     timezone: string;
     language: string;
@@ -45,6 +52,7 @@ const SettingsSchema: Schema = new Schema(
         taxConfig: {
             defaultTaxRate: { type: Number, default: 0 },
             taxSystem: { type: String, enum: ['GST', 'VAT', 'SalesTax'], default: 'GST' },
+            roundingMode: { type: String, enum: ['none', 'nearest', 'up', 'down'], default: 'none' },
         },
         receiptConfig: {
             header: { type: String },
@@ -56,6 +64,12 @@ const SettingsSchema: Schema = new Schema(
             lowStockThreshold: { type: Number, default: 10 },
             enableEmail: { type: Boolean, default: true },
             enableSMS: { type: Boolean, default: false },
+        },
+        inventoryConfig: {
+            allowNegativeStock: { type: Boolean, default: true },
+            cashierCanAdjustStock: { type: Boolean, default: false },
+            managersCanChangePrice: { type: Boolean, default: true },
+            adjustmentApprovalThreshold: { type: Number, default: 0 },
         },
         archiveConfig: {
             autoArchiveEnabled: { type: Boolean, default: false },

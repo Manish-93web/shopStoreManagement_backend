@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import Transfer from '../models/Transfer.js';
+import { recordStockMovement } from '../utils/stockMovement.js';
 import Inventory from '../models/Inventory.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
@@ -56,6 +57,16 @@ export const shipTransfer = asyncHandler(async (req: TenantRequest, res: Respons
             { $inc: { quantity: -item.quantity } },
             { new: true }
         );
+        await recordStockMovement({
+            storeId: req.tenantId!,
+            product: item.product,
+            variant: item.variant,
+            type: 'TRANSFER_OUT',
+            quantity: -item.quantity,
+            reference: `Transfer ${transfer.transferNumber || transfer._id}`,
+            referenceId: transfer._id as any,
+            userId: req.user?._id,
+        });
         emitToStore(req.tenantId!.toString(), 'inventory-update', {
             productId: item.product,
             variantId: item.variant,
@@ -88,6 +99,16 @@ export const receiveTransfer = asyncHandler(async (req: TenantRequest, res: Resp
             { $inc: { quantity: item.quantity } },
             { upsert: true, new: true }
         );
+        await recordStockMovement({
+            storeId: req.tenantId!,
+            product: item.product,
+            variant: item.variant,
+            type: 'TRANSFER_IN',
+            quantity: item.quantity,
+            reference: `Transfer ${transfer.transferNumber || transfer._id}`,
+            referenceId: transfer._id as any,
+            userId: req.user?._id,
+        });
         emitToStore(req.tenantId!.toString(), 'inventory-update', {
             productId: item.product,
             variantId: item.variant,

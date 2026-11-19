@@ -9,7 +9,7 @@ const StockAdjustmentSchema = new Schema({
     type: { type: String, enum: ['ADD', 'SUBTRACT'], required: true },
     reason: {
         type: String,
-        enum: ['Damaged', 'Correction', 'Restock', 'Expire', 'Other'],
+        enum: ['Damaged', 'Correction', 'Restock', 'Expire', 'Other', 'Stock Count'],
         default: 'Correction'
     },
     notes: { type: String },

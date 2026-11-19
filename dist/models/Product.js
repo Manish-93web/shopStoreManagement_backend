@@ -1,4 +1,5 @@
 import mongoose, { Schema } from 'mongoose';
+import { UNIT_CODES } from '../utils/units.js';
 const ProductSchema = new Schema({
     name: { type: String, required: true },
     sku: { type: String, required: true },
@@ -8,11 +9,31 @@ const ProductSchema = new Schema({
     brand: { type: Schema.Types.ObjectId, ref: 'Brand' },
     description: { type: String },
     price: { type: Number, required: true },
-    costPrice: { type: Number, required: true },
+    costPrice: { type: Number, default: 0 },
     mrp: { type: Number },
     taxRate: { type: Number, default: 0 },
     taxRule: { type: Schema.Types.ObjectId, ref: 'TaxRule' },
     hsnCode: { type: String },
+    unit: { type: String, enum: UNIT_CODES, default: 'pcs' },
+    altBarcodes: [{ type: String }],
+    location: { type: String, trim: true },
+    trackBatch: { type: Boolean, default: false },
+    composition: { type: String, trim: true },
+    drugSchedule: { type: String, trim: true },
+    trackSerial: { type: Boolean, default: false },
+    warrantyMonths: { type: Number },
+    isCombo: { type: Boolean, default: false },
+    comboItems: [
+        {
+            product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
+            quantity: { type: Number, required: true, min: 0 },
+            _id: false,
+        },
+    ],
+    lastPurchasePrice: { type: Number },
+    lastPurchaseDate: { type: Date },
+    lastSupplier: { type: Schema.Types.ObjectId, ref: 'Supplier' },
+    isActive: { type: Boolean, default: true },
     images: [{ type: String }],
     hasVariants: { type: Boolean, default: false },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
@@ -20,6 +41,7 @@ const ProductSchema = new Schema({
 // Compound indexes to allow same SKU/Barcode across different stores/tenants
 ProductSchema.index({ storeId: 1, sku: 1 }, { unique: true });
 ProductSchema.index({ storeId: 1, barcode: 1 }, { unique: true });
+ProductSchema.index({ storeId: 1, altBarcodes: 1 }, { partialFilterExpression: { altBarcodes: { $type: 'string' } } });
 // Real text index for whole/prefix-word search (e.g. a future public catalog page).
 // productController.getProducts deliberately keeps its existing regex-based search as
 // the primary query mechanism for the inventory search bar — a text index structurally

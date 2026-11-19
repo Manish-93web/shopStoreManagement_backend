@@ -6,6 +6,10 @@ import Inventory from '../models/Inventory.js';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
+import StockMovement from '../models/StockMovement.js';
+import PriceHistory from '../models/PriceHistory.js';
+import Product from '../models/Product.js';
+import ProductVariant from '../models/ProductVariant.js';
 
 export const inventoryDetailController = {
     // @desc    Get batches for a product
@@ -151,13 +155,140 @@ export const inventoryDetailController = {
         res.status(200).json(new ApiResponse(200, history));
     }),
 
+    // @desc    Every stock movement of one product (purchases, sales, returns, adjustments, transfers...)
+    getLedger: asyncHandler(async (req: TenantRequest, res: Response) => {
+        const { productId, type, from, to } = req.query;
+        if (!productId) return res.status(400).json(new ApiResponse(400, null, 'productId is required'));
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+
+        const query: any = { storeId: req.tenantId, product: productId };
+        if (type) query.type = type;
+        if (from || to) {
+            query.createdAt = {};
+            if (from) query.createdAt.$gte = new Date(String(from));
+            if (to) query.createdAt.$lte = new Date(String(to));
+        }
+        const [movements, total] = await Promise.all([
+            StockMovement.find(query)
+                .populate('createdBy', 'name')
+                .populate('variant', 'name')
+                .sort({ createdAt: -1 })
+                .skip((page - 1) * limit)
+                .limit(limit)
+                .lean(),
+            StockMovement.countDocuments(query),
+        ]);
+        res.status(200).json(
+            new ApiResponse(200, { movements, pagination: { total, page, limit, pages: Math.ceil(total / limit) } })
+        );
+    }),
+
+    // @desc    Price changes of one product, plus its last purchase
+    getPriceHistory: asyncHandler(async (req: TenantRequest, res: Response) => {
+        const { productId } = req.query;
+        if (!productId) return res.status(400).json(new ApiResponse(400, null, 'productId is required'));
+        const [history, product] = await Promise.all([
+            PriceHistory.find({ storeId: req.tenantId, product: productId })
+                .populate('changedBy', 'name')
+                .sort({ createdAt: -1 })
+                .limit(100)
+                .lean(),
+            Product.findOne({ _id: productId, storeId: req.tenantId })
+                .select('price mrp costPrice lastPurchasePrice lastPurchaseDate lastSupplier')
+                .populate('lastSupplier', 'name')
+                .lean(),
+        ]);
+        res.status(200).json(new ApiResponse(200, { history, product }));
+    }),
+
+    // @desc    Products that are at or below their reorder level, with how much to order
+    //          Quantity to order: the fixed reorder quantity if set, else up to the max stock if set,
+    //          else enough to reach twice the reorder level.
+    getReorderSuggestions: asyncHandler(async (req: TenantRequest, res: Response) => {
+        const low = await Inventory.find({
+            store: req.tenantId,
+            $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
+        })
+            .populate({
+                path: 'product',
+                select: 'name sku unit costPrice isActive isCombo lastPurchasePrice lastSupplier',
+                populate: { path: 'lastSupplier', select: 'name' },
+            })
+            .lean();
+
+        const variantIds = low.filter((i: any) => i.variant).map((i: any) => i.variant);
+        const variants = await ProductVariant.find({ _id: { $in: variantIds } })
+            .select('name sku costPrice')
+            .lean();
+        const variantById = new Map(variants.map((v: any) => [v._id.toString(), v]));
+
+        const suggestions = low
+            .filter((i: any) => i.product && i.product.isActive !== false && !i.product.isCombo)
+            .map((i: any) => {
+                const level = i.lowStockThreshold ?? 0;
+                let suggested: number;
+                if (i.reorderQty && i.reorderQty > 0) suggested = i.reorderQty;
+                else if (i.maxStock && i.maxStock > i.quantity) suggested = i.maxStock - i.quantity;
+                else suggested = Math.max(level * 2 - i.quantity, 1);
+                const variant: any = i.variant ? variantById.get(i.variant.toString()) : undefined;
+                const cost = variant?.costPrice ?? i.product.lastPurchasePrice ?? i.product.costPrice ?? 0;
+                return {
+                    productId: i.product._id,
+                    variantId: i.variant,
+                    name: variant ? `${i.product.name} (${variant.name})` : i.product.name,
+                    sku: variant?.sku || i.product.sku,
+                    unit: i.product.unit,
+                    quantity: i.quantity,
+                    reorderLevel: level,
+                    maxStock: i.maxStock,
+                    suggestedQty: Math.ceil(suggested * 1000) / 1000,
+                    costPrice: cost,
+                    supplier: i.product.lastSupplier || null,
+                };
+            })
+            .sort((a: any, b: any) => a.quantity - b.quantity);
+
+        res.status(200).json(new ApiResponse(200, suggestions));
+    }),
+
+    // @desc    Look a serial / IMEI up: the product, whether it was sold, to whom, and its warranty
+    lookupSerial: asyncHandler(async (req: TenantRequest, res: Response) => {
+        const serial = String(req.query.serial || '').trim();
+        if (!serial) return res.status(400).json(new ApiResponse(400, null, 'Enter a serial number'));
+        const doc: any = await ProductSerial.findOne({ storeId: req.tenantId, serialNumber: serial })
+            .populate('product', 'name sku warrantyMonths')
+            .populate({
+                path: 'currentOrder',
+                select: 'orderNumber createdAt customer',
+                populate: { path: 'customer', select: 'name phone' },
+            })
+            .lean();
+        if (!doc) return res.status(404).json(new ApiResponse(404, null, 'No unit found with this serial number'));
+        const now = Date.now();
+        const warrantyExpiry = doc.warrantyExpiry ? new Date(doc.warrantyExpiry) : null;
+        res.status(200).json(
+            new ApiResponse(200, {
+                serialNumber: doc.serialNumber,
+                status: doc.status,
+                product: doc.product,
+                order: doc.currentOrder || null,
+                warrantyExpiry,
+                inWarranty: warrantyExpiry ? warrantyExpiry.getTime() >= now : null,
+                history: doc.history,
+            })
+        );
+    }),
+
     // @desc    Get Low Stock Alerts
     getLowStockAlerts: asyncHandler(async (req: TenantRequest, res: Response) => {
         // Find inventory where quantity <= lowStockThreshold
-        const lowStockItems = await Inventory.find({
-            store: req.tenantId,
-            $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
-        }).populate('product', 'name sku image barcode');
+        const lowStockItems = (
+            await Inventory.find({
+                store: req.tenantId,
+                $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
+            }).populate('product', 'name sku image barcode isCombo isActive')
+        ).filter((r: any) => r.product && !r.product.isCombo && r.product.isActive !== false);
 
         res.status(200).json(new ApiResponse(200, lowStockItems));
     }),

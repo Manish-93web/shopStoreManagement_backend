@@ -6,6 +6,7 @@ import Inventory from '../models/Inventory.js';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { bumpCacheVersion } from '../config/redis.js';
+import { recordStockMovement, inventoryFilter } from '../utils/stockMovement.js';
 
 // @desc    Get all variants for a product
 // @route   GET /api/v1/products/:productId/variants
@@ -56,6 +57,17 @@ export const createVariant = asyncHandler(async (req: TenantRequest, res: Respon
         store: req.tenantId,
         quantity: req.body.initialStock || 0,
     });
+    if (Number(req.body.initialStock) > 0) {
+        await recordStockMovement({
+            storeId: req.tenantId!,
+            product: productId as string,
+            variant: variant._id as any,
+            type: 'OPENING',
+            quantity: Number(req.body.initialStock),
+            reference: 'Opening stock',
+            userId: req.user?._id,
+        });
+    }
 
     // Mark parent product as having variants
     await Product.findByIdAndUpdate(productId, { hasVariants: true });
@@ -80,11 +92,24 @@ export const updateVariant = asyncHandler(async (req: TenantRequest, res: Respon
     // Update inventory if stock/initialStock provided
     const newStock = stock !== undefined ? stock : initialStock;
     if (newStock !== undefined) {
+        const before = await Inventory.findOne({ variant: variant._id, store: req.tenantId });
         await Inventory.findOneAndUpdate(
             { variant: variant._id, store: req.tenantId },
             { $set: { quantity: newStock } },
             { upsert: true, returnDocument: 'after' }
         );
+        const delta = Number(newStock) - (before?.quantity ?? 0);
+        if (delta !== 0) {
+            await recordStockMovement({
+                storeId: req.tenantId!,
+                product: variant.productId as any,
+                variant: variant._id as any,
+                type: 'ADJUSTMENT',
+                quantity: delta,
+                reference: 'Variant stock edited',
+                userId: req.user?._id,
+            });
+        }
     }
 
     await bumpCacheVersion(req.tenantId!.toString());
