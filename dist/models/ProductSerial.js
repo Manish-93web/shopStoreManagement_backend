@@ -8,15 +8,17 @@ const ProductSerialSchema = new Schema({
     status: {
         type: String,
         enum: ['In Stock', 'Sold', 'Returned', 'Damaged', 'Transferred'],
-        default: 'In Stock'
+        default: 'In Stock',
     },
     currentOrder: { type: Schema.Types.ObjectId, ref: 'Order' },
-    history: [{
+    history: [
+        {
             action: { type: String, required: true },
             date: { type: Date, default: Date.now },
             referenceId: { type: Schema.Types.ObjectId },
-            notes: { type: String }
-        }],
+            notes: { type: String },
+        },
+    ],
     warrantyExpiry: { type: Date },
 }, { timestamps: true });
 // A serial number only needs to be unique inside one store.

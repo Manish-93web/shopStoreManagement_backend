@@ -7,7 +7,7 @@ const InventorySchema = new Schema({
     lowStockThreshold: { type: Number, default: 10 },
     maxStock: { type: Number },
     reorderQty: { type: Number },
-    lastStockUpdate: { type: Date, default: Date.now }
+    lastStockUpdate: { type: Date, default: Date.now },
 }, { timestamps: true });
 // Ensure unique combination of product, store, and variant
 InventorySchema.index({ product: 1, store: 1, variant: 1 }, { unique: true });

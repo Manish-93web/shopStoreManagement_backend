@@ -80,9 +80,18 @@ export const importController = {
         });
         if (!col.name) {
             // No headings we recognise: the original fixed order.
-            Object.assign(col, { name: 1, sku: 2, barcode: 3, category: 4, price: 5, costPrice: 6, taxRate: 7, stock: 8 });
+            Object.assign(col, {
+                name: 1,
+                sku: 2,
+                barcode: 3,
+                category: 4,
+                price: 5,
+                costPrice: 6,
+                taxRate: 7,
+                stock: 8,
+            });
         }
-        const get = (row, field) => (col[field] ? row.getCell(col[field]).text.trim() : '');
+        const get = (row, field) => col[field] ? row.getCell(col[field]).text.trim() : '';
         const num = (v) => {
             if (v === '')
                 return undefined;
@@ -114,7 +123,10 @@ export const importController = {
             const key = `${parentId || ''}|${nameKey(name)}`;
             if (categoryCache.has(key))
                 return categoryCache.get(key);
-            const filter = { storeId, name: new RegExp(`^${name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
+            const filter = {
+                storeId,
+                name: new RegExp(`^${name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+            };
             filter.parentId = parentId || { $in: [null, undefined] };
             let cat = await Category.findOne(filter);
             if (!cat)
@@ -127,7 +139,10 @@ export const importController = {
             const key = nameKey(name);
             if (brandCache.has(key))
                 return brandCache.get(key);
-            let brand = await Brand.findOne({ storeId, name: new RegExp(`^${name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') });
+            let brand = await Brand.findOne({
+                storeId,
+                name: new RegExp(`^${name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+            });
             if (!brand)
                 brand = await Brand.create({ name: name.trim(), storeId });
             brandCache.set(key, brand);
@@ -411,8 +426,41 @@ export const importController = {
             { header: 'Expiry Date', key: 'expiry', width: 12 },
         ];
         sheet.getRow(1).font = { bold: true };
-        sheet.addRow({ name: 'Basmati Rice', sku: 'RICE-01', barcode: '8901234500011', category: 'Grocery', subCategory: 'Rice', brand: 'India Gate', unit: 'kg', price: 95, mrp: 110, costPrice: 78, taxRate: 5, hsn: '1006', stock: 120, reorderLevel: 20, location: 'A-3' });
-        sheet.addRow({ name: 'Paracetamol 500mg', sku: 'MED-01', barcode: '8901234500028', category: 'Medicine', unit: 'pack', price: 28, mrp: 32, costPrice: 20, taxRate: 12, hsn: '3004', stock: 60, reorderLevel: 10, location: 'B-1', batch: 'B2401', mfg: '2026-01-15', expiry: '2028-01-14' });
+        sheet.addRow({
+            name: 'Basmati Rice',
+            sku: 'RICE-01',
+            barcode: '8901234500011',
+            category: 'Grocery',
+            subCategory: 'Rice',
+            brand: 'India Gate',
+            unit: 'kg',
+            price: 95,
+            mrp: 110,
+            costPrice: 78,
+            taxRate: 5,
+            hsn: '1006',
+            stock: 120,
+            reorderLevel: 20,
+            location: 'A-3',
+        });
+        sheet.addRow({
+            name: 'Paracetamol 500mg',
+            sku: 'MED-01',
+            barcode: '8901234500028',
+            category: 'Medicine',
+            unit: 'pack',
+            price: 28,
+            mrp: 32,
+            costPrice: 20,
+            taxRate: 12,
+            hsn: '3004',
+            stock: 60,
+            reorderLevel: 10,
+            location: 'B-1',
+            batch: 'B2401',
+            mfg: '2026-01-15',
+            expiry: '2028-01-14',
+        });
         const notes = workbook.addWorksheet('Read me');
         [
             'Name is required. For a NEW product Category and Price are also required.',

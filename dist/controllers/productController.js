@@ -60,7 +60,7 @@ const comboError = async (storeId, comboItems, selfId) => {
 // Reorder level / max stock / reorder quantity live on the Inventory row.
 const reorderFields = (body) => {
     const out = {};
-    const num = (v) => (v === '' || v === null || v === undefined || !Number.isFinite(Number(v)) ? undefined : Number(v));
+    const num = (v) => v === '' || v === null || v === undefined || !Number.isFinite(Number(v)) ? undefined : Number(v);
     if (num(body.reorderLevel) !== undefined)
         out.lowStockThreshold = num(body.reorderLevel);
     if (body.maxStock !== undefined)

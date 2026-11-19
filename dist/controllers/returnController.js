@@ -69,7 +69,11 @@ export const returnController = {
                 for (const serial of sold) {
                     serial.status = 'In Stock';
                     serial.currentOrder = undefined;
-                    serial.history.push({ action: 'Returned by customer', date: new Date(), referenceId: returnOrder._id });
+                    serial.history.push({
+                        action: 'Returned by customer',
+                        date: new Date(),
+                        referenceId: returnOrder._id,
+                    });
                     await serial.save({ session });
                 }
             }

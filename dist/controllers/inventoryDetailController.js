@@ -222,7 +222,11 @@ export const inventoryDetailController = {
             return res.status(400).json(new ApiResponse(400, null, 'Enter a serial number'));
         const doc = await ProductSerial.findOne({ storeId: req.tenantId, serialNumber: serial })
             .populate('product', 'name sku warrantyMonths')
-            .populate({ path: 'currentOrder', select: 'orderNumber createdAt customer', populate: { path: 'customer', select: 'name phone' } })
+            .populate({
+            path: 'currentOrder',
+            select: 'orderNumber createdAt customer',
+            populate: { path: 'customer', select: 'name phone' },
+        })
             .lean();
         if (!doc)
             return res.status(404).json(new ApiResponse(404, null, 'No unit found with this serial number'));
