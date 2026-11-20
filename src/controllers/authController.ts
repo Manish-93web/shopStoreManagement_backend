@@ -157,6 +157,49 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 });
 
 // @desc    Logout user / clear refresh token
+// @desc    The signed-in user's own login details
+// @route   GET /api/auth/profile
+// @access  Private
+export const getMyProfile = asyncHandler(async (req: any, res: Response) => {
+    const user = await User.findById(req.user.id).select('name email phone');
+    if (!user) return res.status(404).json(new ApiResponse(404, null, 'User not found'));
+    res.status(200).json(new ApiResponse(200, { id: user._id, name: user.name, email: user.email, phone: user.phone }));
+});
+
+// @desc    Add or change the mobile number this user signs in with
+// @route   PUT /api/auth/profile
+// @access  Private
+export const updateMyProfile = asyncHandler(async (req: any, res: Response) => {
+    const phone = String(req.body.phone ?? '')
+        .replace(/\D/g, '')
+        .slice(-10);
+    if (!/^\d{10}$/.test(phone)) {
+        return res.status(400).json(new ApiResponse(400, null, 'Enter a 10 digit mobile number'));
+    }
+    const taken = await User.findOne({ phone, _id: { $ne: req.user.id } }).select('_id');
+    if (taken) {
+        return res
+            .status(409)
+            .json(new ApiResponse(409, null, 'This mobile number is already used by another account'));
+    }
+    const user = await User.findByIdAndUpdate(req.user.id, { phone }, { returnDocument: 'after' }).select(
+        'name email phone'
+    );
+    if (!user) return res.status(404).json(new ApiResponse(404, null, 'User not found'));
+    await logAudit({
+        req,
+        storeId: req.user.storeId || null,
+        userId: user._id,
+        action: 'UPDATED_USER',
+        entity: 'User',
+        entityId: user._id,
+        details: 'Login mobile number updated',
+    });
+    res.status(200).json(
+        new ApiResponse(200, { id: user._id, name: user.name, email: user.email, phone: user.phone }, 'Saved')
+    );
+});
+
 // @route   POST /api/auth/logout
 // @access  Private
 export const logout = asyncHandler(async (req: any, res: Response) => {
