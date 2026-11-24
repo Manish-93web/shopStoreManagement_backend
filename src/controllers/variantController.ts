@@ -6,7 +6,12 @@ import Inventory from '../models/Inventory.js';
 import ApiResponse from '../utils/apiResponse.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { bumpCacheVersion } from '../config/redis.js';
-import { recordStockMovement, inventoryFilter } from '../utils/stockMovement.js';
+import {
+    recordStockMovement,
+    inventoryFilter,
+    takeFromUnassigned,
+    returnToUnassigned,
+} from '../utils/stockMovement.js';
 
 // @desc    Get all variants for a product
 // @route   GET /api/v1/products/:productId/variants
@@ -58,6 +63,7 @@ export const createVariant = asyncHandler(async (req: TenantRequest, res: Respon
         quantity: req.body.initialStock || 0,
     });
     if (Number(req.body.initialStock) > 0) {
+        await takeFromUnassigned(req.tenantId!, productId as string, Number(req.body.initialStock), req.user?._id);
         await recordStockMovement({
             storeId: req.tenantId!,
             product: productId as string,
@@ -100,6 +106,11 @@ export const updateVariant = asyncHandler(async (req: TenantRequest, res: Respon
         );
         const delta = Number(newStock) - (before?.quantity ?? 0);
         if (delta !== 0) {
+            // Giving a size more stock takes it from the product's unassigned stock, and taking stock off a size
+            // puts it back there, so the product's total stays the same. (Anything beyond what the unassigned
+            // stock can cover is simply new stock.)
+            if (delta > 0) await takeFromUnassigned(req.tenantId!, variant.productId as any, delta, req.user?._id);
+            else await returnToUnassigned(req.tenantId!, variant.productId as any, -delta, req.user?._id);
             await recordStockMovement({
                 storeId: req.tenantId!,
                 product: variant.productId as any,

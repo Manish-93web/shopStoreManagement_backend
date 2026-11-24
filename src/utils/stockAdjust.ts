@@ -29,7 +29,7 @@ export const applyStockAdjustment = async (a: {
     let inv;
     try {
         inv = await Inventory.findOneAndUpdate(
-            { product: a.productId, store: a.tenantId },
+            { product: a.productId, store: a.tenantId, variant: { $exists: false } },
             { $inc: { quantity: adjustQty }, $set: { lastStockUpdate: new Date() } },
             { new: true, upsert: true, session }
         );

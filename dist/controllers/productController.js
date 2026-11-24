@@ -188,13 +188,16 @@ export const getProducts = asyncHandler(async (req, res) => {
         ...p,
         nearestExpiry: expiryByProduct.get(p._id.toString()),
         variants: variantsByProduct.get(p._id.toString()) || [],
-        // A product with sizes / colours has its stock on the variants: show their total.
+        // Stock not yet assigned to a size / colour (the product's own stock row).
+        unassignedStock: variantsByProduct.has(p._id.toString()) ? (inventoryMap.get(p._id.toString())?.quantity ?? 0) : undefined,
+        // A product with sizes / colours: its own unassigned stock plus the stock of every size / colour.
         inventory: p.isCombo
             ? { ...(inventoryMap.get(p._id.toString())?.toObject?.() || {}), quantity: comboQuantity(p) }
             : variantsByProduct.has(p._id.toString())
                 ? {
                     ...(inventoryMap.get(p._id.toString())?.toObject?.() || {}),
-                    quantity: variantsByProduct.get(p._id.toString()).reduce((sum, v) => sum + v.stock, 0),
+                    quantity: (inventoryMap.get(p._id.toString())?.quantity ?? 0) +
+                        variantsByProduct.get(p._id.toString()).reduce((sum, v) => sum + v.stock, 0),
                 }
                 : inventoryMap.get(p._id.toString()),
         // A linked Percentage tax rule overrides the flat taxRate; a Fixed-amount rule

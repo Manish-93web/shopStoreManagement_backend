@@ -139,7 +139,9 @@ export const getMyProfile = asyncHandler(async (req, res) => {
 // @route   PUT /api/auth/profile
 // @access  Private
 export const updateMyProfile = asyncHandler(async (req, res) => {
-    const phone = String(req.body.phone ?? '').replace(/\D/g, '').slice(-10);
+    const phone = String(req.body.phone ?? '')
+        .replace(/\D/g, '')
+        .slice(-10);
     if (!/^\d{10}$/.test(phone)) {
         return res.status(400).json(new ApiResponse(400, null, 'Enter a 10 digit mobile number'));
     }

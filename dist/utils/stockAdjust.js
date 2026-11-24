@@ -17,7 +17,7 @@ export const applyStockAdjustment = async (a) => {
     session.startTransaction();
     let inv;
     try {
-        inv = await Inventory.findOneAndUpdate({ product: a.productId, store: a.tenantId }, { $inc: { quantity: adjustQty }, $set: { lastStockUpdate: new Date() } }, { new: true, upsert: true, session });
+        inv = await Inventory.findOneAndUpdate({ product: a.productId, store: a.tenantId, variant: { $exists: false } }, { $inc: { quantity: adjustQty }, $set: { lastStockUpdate: new Date() } }, { new: true, upsert: true, session });
         await StockAdjustment.create([
             {
                 productId: a.productId,

@@ -12,7 +12,7 @@ import { TenantRequest } from '../middleware/tenantHandler.js';
 import { bumpCacheVersion } from '../config/redis.js';
 import { emitToStore } from '../config/socket.js';
 import { applyStockAdjustment } from '../utils/stockAdjust.js';
-import { inventoryFilter, recordPriceChange, recordStockMovement } from '../utils/stockMovement.js';
+import { inventoryFilter, recordPriceChange, recordStockMovement, takeFromUnassigned } from '../utils/stockMovement.js';
 import { notificationService } from '../services/notificationService.js';
 import Settings from '../models/Settings.js';
 
@@ -237,6 +237,7 @@ export const generateVariants = asyncHandler(async (req: TenantRequest, res: Res
                 quantity: initialStock,
             });
             if (initialStock > 0) {
+                await takeFromUnassigned(req.tenantId!, product._id as any, initialStock, req.user?._id);
                 await recordStockMovement({
                     storeId: req.tenantId!,
                     product: product._id as any,

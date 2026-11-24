@@ -10,7 +10,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { bumpCacheVersion } from '../config/redis.js';
 import { emitToStore } from '../config/socket.js';
 import { applyStockAdjustment } from '../utils/stockAdjust.js';
-import { inventoryFilter, recordPriceChange, recordStockMovement } from '../utils/stockMovement.js';
+import { inventoryFilter, recordPriceChange, recordStockMovement, takeFromUnassigned } from '../utils/stockMovement.js';
 import { notificationService } from '../services/notificationService.js';
 import Settings from '../models/Settings.js';
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -213,6 +213,7 @@ export const generateVariants = asyncHandler(async (req, res) => {
                 quantity: initialStock,
             });
             if (initialStock > 0) {
+                await takeFromUnassigned(req.tenantId, product._id, initialStock, req.user?._id);
                 await recordStockMovement({
                     storeId: req.tenantId,
                     product: product._id,
