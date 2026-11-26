@@ -8,6 +8,7 @@ import StockMovement from '../models/StockMovement.js';
 import PriceHistory from '../models/PriceHistory.js';
 import Product from '../models/Product.js';
 import ProductVariant from '../models/ProductVariant.js';
+import { findLowStockRows } from '../utils/lowStock.js';
 export const inventoryDetailController = {
     // @desc    Get batches for a product
     getBatches: asyncHandler(async (req, res) => {
@@ -170,16 +171,16 @@ export const inventoryDetailController = {
     //          Quantity to order: the fixed reorder quantity if set, else up to the max stock if set,
     //          else enough to reach twice the reorder level.
     getReorderSuggestions: asyncHandler(async (req, res) => {
-        const low = await Inventory.find({
+        const low = (await Inventory.find({
             store: req.tenantId,
             $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
         })
             .populate({
             path: 'product',
-            select: 'name sku unit costPrice isActive isCombo lastPurchasePrice lastSupplier',
+            select: 'name sku unit costPrice isActive isCombo hasVariants lastPurchasePrice lastSupplier',
             populate: { path: 'lastSupplier', select: 'name' },
         })
-            .lean();
+            .lean()).filter((i) => !(i.product?.hasVariants && !i.variant));
         const variantIds = low.filter((i) => i.variant).map((i) => i.variant);
         const variants = await ProductVariant.find({ _id: { $in: variantIds } })
             .select('name sku costPrice')
@@ -244,11 +245,8 @@ export const inventoryDetailController = {
     }),
     // @desc    Get Low Stock Alerts
     getLowStockAlerts: asyncHandler(async (req, res) => {
-        // Find inventory where quantity <= lowStockThreshold
-        const lowStockItems = (await Inventory.find({
-            store: req.tenantId,
-            $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
-        }).populate('product', 'name sku image barcode isCombo isActive')).filter((r) => r.product && !r.product.isCombo && r.product.isActive !== false);
+        // Find inventory where quantity <= lowStockThreshold (a product with sizes is judged by its sizes)
+        const lowStockItems = await findLowStockRows(req.tenantId);
         res.status(200).json(new ApiResponse(200, lowStockItems));
     }),
 };

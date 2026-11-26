@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
-import Inventory from '../models/Inventory.js';
+import { findLowStockRows } from '../utils/lowStock.js';
 import Customer from '../models/Customer.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import SupplierPayment from '../models/SupplierPayment.js';
@@ -110,7 +110,7 @@ export const getDashboardSummary = asyncHandler(async (req: TenantRequest, res: 
             Order.find({ storeId, createdAt: { $gte: today }, status: 'Completed' }),
             Order.find({ storeId, createdAt: { $gte: yesterday, $lt: today }, status: 'Completed' }),
             Product.countDocuments({ storeId }),
-            Inventory.countDocuments({ store: storeId, quantity: { $lte: 10 } }),
+            findLowStockRows(storeId).then((rows) => rows.length),
         ]);
 
         const todayRevenue = todayOrders.reduce((sum, o) => sum + o.grandTotal, 0);

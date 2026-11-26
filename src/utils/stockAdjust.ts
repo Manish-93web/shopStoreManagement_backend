@@ -93,7 +93,8 @@ export const applyStockAdjustment = async (a: {
     if (inv && inv.quantity <= (inv.lowStockThreshold || 5)) {
         const store = await Store.findById(a.tenantId);
         const product = await Product.findById(a.productId);
-        if (store && product) {
+        // A product with sizes keeps only its unassigned stock here; its sizes are what can run low.
+        if (store && product && !product.hasVariants) {
             await notificationService.send({
                 recipientId: store.owner.toString(),
                 storeId: a.tenantId.toString(),

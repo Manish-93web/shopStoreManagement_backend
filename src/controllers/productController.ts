@@ -137,7 +137,20 @@ export const getProducts = asyncHandler(async (req: TenantRequest, res: Response
             invQuery.$expr = { $gt: ['$quantity', '$lowStockThreshold'] };
         }
 
-        const matchingInventories = await Inventory.find(invQuery).select('product');
+        let matchingInventories = await Inventory.find(invQuery).select('product variant');
+        if (stockStatus === 'low' || stockStatus === 'out') {
+            // The base row of a product with sizes only holds its not-yet-assigned stock (normally 0), so it
+            // says nothing about whether the product is low: its sizes' rows decide that.
+            const withSizes = new Set(
+                (
+                    await Product.find({
+                        _id: { $in: matchingInventories.filter((i) => !i.variant).map((i) => i.product) },
+                        hasVariants: true,
+                    }).select('_id')
+                ).map((p) => p._id.toString())
+            );
+            matchingInventories = matchingInventories.filter((i) => i.variant || !withSizes.has(i.product.toString()));
+        }
         const productIds = matchingInventories.map((inv) => inv.product);
         query._id = { $in: productIds };
     }

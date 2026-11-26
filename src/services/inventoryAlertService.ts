@@ -1,4 +1,4 @@
-import Inventory from '../models/Inventory.js';
+import { findLowStockRows } from '../utils/lowStock.js';
 import InventoryBatch from '../models/InventoryBatch.js';
 import User from '../models/User.js';
 import { notificationService } from './notificationService.js';
@@ -10,12 +10,7 @@ export const inventoryAlertService = {
      * Checks all products in a store for low stock and sends alerts
      */
     checkLowStock: async (storeId: string) => {
-        const lowStockItems = await Inventory.find({
-            store: storeId,
-            $expr: { $lte: ['$quantity', '$lowStockThreshold'] },
-        })
-            .populate('product', 'name sku isCombo isActive')
-            .then((rows) => rows.filter((r: any) => r.product && !r.product.isCombo && r.product.isActive !== false));
+        const lowStockItems = await findLowStockRows(storeId);
 
         if (lowStockItems.length === 0) return;
 
@@ -27,11 +22,12 @@ export const inventoryAlertService = {
         for (const recipient of recipients) {
             for (const item of lowStockItems) {
                 const product: any = item.product;
+                const variant: any = item.variant;
                 await notificationService.send({
                     recipientId: (recipient._id as any).toString(),
                     storeId,
                     title: 'Low Stock Alert 🚨',
-                    message: `Product "${product.name}" (${product.sku}) is running low. Current stock: ${item.quantity}.`,
+                    message: `Product "${product.name}${variant ? ` (${variant.name})` : ''}" (${variant?.sku || product.sku}) is running low. Current stock: ${item.quantity}.`,
                     type: 'WARNING',
                     actionUrl: '/inventory',
                 });
