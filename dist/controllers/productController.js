@@ -105,7 +105,17 @@ export const getProducts = asyncHandler(async (req, res) => {
     else if (isActive === 'false')
         query.isActive = false;
     if (search) {
+        // A size / colour has its own SKU and barcode (printed on its label), so a scan of one finds its product.
+        const variantHits = await ProductVariant.find({
+            storeId: req.tenantId,
+            isActive: { $ne: false },
+            $or: [{ sku: { $regex: search, $options: 'i' } }, { barcode: { $regex: search, $options: 'i' } }],
+        })
+            .select('productId')
+            .limit(50)
+            .lean();
         query.$or = [
+            ...(variantHits.length ? [{ _id: { $in: variantHits.map((v) => v.productId) } }] : []),
             { name: { $regex: search, $options: 'i' } },
             { sku: { $regex: search, $options: 'i' } },
             { barcode: { $regex: search, $options: 'i' } },
@@ -157,7 +167,7 @@ export const getProducts = asyncHandler(async (req, res) => {
         storeId: req.tenantId,
         isActive: { $ne: false },
     })
-        .select('name sku productId')
+        .select('name sku barcode price images productId')
         .sort({ name: 1 })
         .lean();
     const variantsByProduct = new Map();
@@ -165,7 +175,15 @@ export const getProducts = asyncHandler(async (req, res) => {
         const key = v.productId.toString();
         variantsByProduct.set(key, [
             ...(variantsByProduct.get(key) || []),
-            { _id: v._id, name: v.name, sku: v.sku, stock: variantStock.get(v._id.toString()) ?? 0 },
+            {
+                _id: v._id,
+                name: v.name,
+                sku: v.sku,
+                barcode: v.barcode,
+                price: v.price,
+                images: v.images,
+                stock: variantStock.get(v._id.toString()) ?? 0,
+            },
         ]);
     }
     // Batch-tracked products show their nearest expiry; a combo shows how many bundles its components allow.
