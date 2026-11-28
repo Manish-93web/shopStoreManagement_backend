@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { customAlphabet } from 'nanoid';
 import { TenantRequest } from '../middleware/tenantHandler.js';
 import ProductVariant from '../models/ProductVariant.js';
 import Product from '../models/Product.js';
@@ -50,7 +51,18 @@ export const createVariant = asyncHandler(async (req: TenantRequest, res: Respon
         storeId: req.tenantId,
     };
     if (!variantData.barcode) {
-        delete variantData.barcode;
+        // No barcode given: make a short numeric one. A label with the long SKU gets a very dense barcode
+        // that many scanners cannot read; 12 digits print with wide, clear bars.
+        const makeBarcode = customAlphabet('0123456789', 12);
+        let code = makeBarcode();
+        for (let i = 0; i < 5; i++) {
+            const clash =
+                (await ProductVariant.exists({ storeId: req.tenantId, barcode: code })) ||
+                (await Product.exists({ storeId: req.tenantId, barcode: code } as any));
+            if (!clash) break;
+            code = makeBarcode();
+        }
+        variantData.barcode = code;
     }
 
     const variant = await ProductVariant.create(variantData);
